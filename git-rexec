@@ -1,0 +1,511 @@
+#!/usr/bin/env python
+#
+# Optional dependencies:
+#   - colorama
+#   - setproctitle
+#
+# Author: James Cherti
+# URL: https://github.com/jamescherti/jc-dev
+#
+# Copyright (C) 2019-2026 James Cherti
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation, either version 3 of the License, or (at your option) any later
+# version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+# FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
+# details.
+#
+# You should have received a copy of the GNU General Public License along with
+# this program. If not, see <https://www.gnu.org/licenses/>.
+#
+"""
+Find Git repositories and execute commands against them in parallel.
+
+This script allows for finding Git repositories within a directory structure
+and executing commands against them. It supports conditional filtering,
+background execution, and sequential foreground execution.
+"""
+
+import argparse
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+import textwrap
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
+from multiprocessing import cpu_count
+from pathlib import Path
+from typing import Optional
+
+try:
+    from colorama import Fore
+    from colorama import init as colorama_init
+    HAS_COLORAMA: bool = True
+except ImportError:
+    HAS_COLORAMA = False
+
+    class Fore:  # type: ignore
+        YELLOW: str = ""
+        RED: str = ""
+        RESET: str = ""
+
+
+@dataclass
+class CommandResult:
+    """
+    Data class to store the result of a subprocess command execution.
+
+    :param command: The command that was executed.
+    :param returncode: The exit status of the command.
+    :param stdout: Standard output content.
+    :param stderr: Standard error content.
+    """
+    command: list[str]
+    returncode: int
+    stdout: str = ""
+    stderr: str = ""
+
+
+@dataclass
+class RepoContext:
+    """
+    A processed Git repository and its execution states.
+
+    :param path: The absolute path to the repository root.
+    :param bg_result: The result of the background execution, if any.
+    """
+    path: Path
+    bg_result: Optional[CommandResult] = None
+
+
+def git_toplevel(repo_path: Path) -> Optional[Path]:
+    """
+    Return the absolute path to the top-level directory of a Git repository.
+
+    :param repo_path: Path inside the Git repository.
+    :return: Path to the repository's top-level directory, or None if not a
+             Git repo.
+    """
+    try:
+        proc: subprocess.CompletedProcess[str] = subprocess.run(
+            ["git", "-C", str(repo_path), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return Path(proc.stdout.strip()).resolve()
+    except subprocess.CalledProcessError:
+        return None
+
+
+def git_fd_find_repo(path: Path, max_workers: int) -> set[Path]:
+    """
+    Find all Git repositories in 'path' using fd.
+
+    :param path: The root directory to search for Git repositories.
+    :param max_workers: Maximum number of threads for fd.
+    :return: set of paths to Git repositories.
+    """
+    path_str: str = str(path)
+    try:
+        # Use fd to find .git directories efficiently
+        proc: subprocess.CompletedProcess[str] = subprocess.run(
+            [
+                'fd', '--type', 'd', '--hidden',
+                '--no-ignore', '^\\.git$',
+                '--absolute-path',
+                '--threads', str(max_workers),
+                path_str
+            ],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+    except FileNotFoundError as err:
+        print(f"Error: {err}", file=sys.stderr)
+        sys.exit(1)
+
+    # Use a set comprehension to remove duplicates and normalize paths
+    # efficiently
+    return {
+        Path(git_dir).parent
+        for git_dir in proc.stdout.splitlines()
+    }
+
+
+def git_py_find_repo(root: Path) -> set[Path]:
+    """
+    Recursively find all Git repositories under the root path using Python.
+
+    :param root: Directory to search under.
+    :return: set of paths to Git repositories.
+    """
+    return {
+        git_dir.absolute().parent
+        for git_dir in root.rglob(".git")
+        if git_dir.is_dir()
+    }
+
+
+def run_command_get_output(repo_path: Path, cmd_list: list[str],
+                           capture: bool = True) -> CommandResult:
+    """
+    Execute a shell command within a specific directory.
+
+    :param repo_path: The directory in which to execute the command.
+    :param cmd_list: The command list to execute.
+    :param capture: Whether to capture stdout/stderr.
+    :return: The result of the command execution.
+    """
+    if not cmd_list:
+        return CommandResult(command=[], returncode=0)
+
+    try:
+        proc: subprocess.CompletedProcess[str] = subprocess.run(
+            cmd_list,
+            cwd=repo_path,
+            capture_output=capture,
+            text=True,
+            check=False
+        )
+        return CommandResult(
+            command=cmd_list,
+            returncode=proc.returncode,
+            stdout=proc.stdout if proc.stdout else "",
+            stderr=proc.stderr if proc.stderr else ""
+        )
+    except FileNotFoundError:
+        return CommandResult(
+            command=cmd_list,
+            returncode=127,
+            stderr=f"Error: Command not found: '{cmd_list[0]}'\n"
+        )
+
+
+def format_bg_output(repo_path: Path, result: CommandResult) -> str:
+    """
+    Format the output of a background command for display.
+
+    :param repo_path: The repository path.
+    :param result: The execution result.
+    :return: Formatted string ready for printing.
+    """
+    header: str = f"{Fore.YELLOW}[EXEC-BG] {repo_path}"
+    cmd_str: str = " ".join(result.command)
+    header += f": {cmd_str}{Fore.RESET}\n"
+
+    raw_output: str = result.stdout + result.stderr
+    if not raw_output and result.returncode == 0:
+        return ""
+
+    indent: str = " " * 4
+    formatted: str = raw_output.replace("\t", "    ").rstrip()
+    if formatted:
+        formatted += "\n"
+
+    indented_body: str = textwrap.indent(formatted, prefix=indent)
+    return header + indented_body
+
+
+def process_repo(repo_path: Path, exec_bg_cmd: Optional[list[str]],
+                 if_exec_cmd: Optional[list[str]]) -> Optional[RepoContext]:
+    """
+    Process a single repository: check conditions and run background commands.
+
+    :param repo_path: The repository path.
+    :param exec_bg_cmd: Command list to execute in background/parallel.
+    :param if_exec_cmd: Command list to check before processing (filter).
+    :return: RepoContext if processed successfully, None if filtered out.
+    """
+    # Filter: if-exec
+    if if_exec_cmd:
+        # We discard output for the filter check, only caring about exit code
+        filter_res: CommandResult = run_command_get_output(
+            repo_path, if_exec_cmd, capture=True
+        )
+        if filter_res.returncode != 0:
+            return None
+
+    # Action: exec-bg
+    bg_result: Optional[CommandResult] = None
+    if exec_bg_cmd:
+        bg_result = run_command_get_output(
+            repo_path, exec_bg_cmd, capture=True
+        )
+
+    return RepoContext(path=repo_path, bg_result=bg_result)
+
+
+def discover_repos(directory: Path,
+                   max_workers: int,
+                   exclude_dirs: list[str]) -> set[Path]:
+    """
+    Discover Git repositories starting from 'directory' and apply exclusions.
+
+    :param directory: The root directory for search.
+    :param max_workers: Maximum number of threads/workers.
+    :param exclude_dirs: Directories to exclude.
+    :return: A set of repository root paths.
+    """
+    repos: set[Path] = set()
+
+    # Discover all repositories
+    toplevel: Optional[Path] = git_toplevel(directory)
+    if toplevel:
+        repos = {toplevel}
+    elif shutil.which("fd"):
+        repos = git_fd_find_repo(directory, max_workers)
+    else:
+        repos = git_py_find_repo(directory)
+
+    # Filter out excluded directories
+    if not exclude_dirs:
+        return repos
+
+    list_ex_paths: list[Path] = [Path(ex_dir).resolve()
+                                 for ex_dir in exclude_dirs]
+    return {
+        repo for repo in repos
+        if not any(repo.resolve().is_relative_to(ex_path)
+                   for ex_path in list_ex_paths)
+    }
+
+
+def execute_parallel_tasks(
+    repos: set[Path],
+    exec_bg: Optional[list[str]],
+    if_exec: Optional[list[str]],
+    max_workers: int
+) -> list[RepoContext]:
+    """
+    Run discovery and background execution in parallel.
+
+    :param repos: set of repositories to process.
+    :param exec_bg: Command list for background execution.
+    :param if_exec: Command list for conditional filtering.
+    :param max_workers: Maximum number of threads for execution.
+    :return: list of processed repository contexts.
+    """
+    results: list[RepoContext] = []
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                process_repo, repo, exec_bg, if_exec
+            ): repo for repo in repos
+        }
+
+        for future in as_completed(futures):
+            try:
+                result: Optional[RepoContext] = future.result()
+                if result:
+                    results.append(result)
+            except Exception as exc:
+                print(f"Generated an exception: {exc}", file=sys.stderr)
+
+    return results
+
+
+def parse_args() -> argparse.Namespace:
+    """
+    Parse command-line arguments.
+
+    :return: Parsed arguments.
+    """
+    parser: argparse.ArgumentParser = argparse.ArgumentParser(
+        description="Find git repos and execute commands.",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "-C", "--directory",
+        type=Path,
+        default=Path("."),
+        help="Root directory to search (defaults to current directory)"
+    )
+    parser.add_argument(
+        "--exclude-dir",
+        action="append",
+        default=[],
+        help="Exclude a specific directory and all of its subdirectories"
+    )
+    parser.add_argument(
+        "-b", "--bg",
+        action="store_true",
+        help="Execute the command in the background (parallel)",
+        default=False
+    )
+    parser.add_argument(
+        "-i", "--if-exec",
+        type=str,
+        help="Execute commands only if this check returns exit code 0.",
+        default=None
+    )
+    parser.add_argument(
+        "-j", "--jobs",
+        type=int,
+        dest="max_workers",
+        help="Maximum number of processors/workers to use",
+        default=(cpu_count() or 1)
+    )
+    parser.add_argument(
+        "exec_cmd",
+        type=str,
+        nargs="*",
+        help="The command to execute. You can use -- to pass options."
+    )
+
+    args: argparse.Namespace = parser.parse_args()
+
+    return args
+
+
+def print_error_summary(errors: list[tuple[Path, CommandResult]]) -> int:
+    """
+    Print a summary of execution errors.
+
+    :param errors: list of tuples containing path and result.
+    :return: The final exit code (1 if errors exist, else 0).
+    """
+    if not errors:
+        return 0
+
+    print()
+    print(f"{Fore.RED}Errors:{Fore.RESET}")
+
+    final_errno: int = 0
+    for repo_path, result in errors:
+        cmd_display: str = " ".join(result.command)
+        if result.returncode != 0:
+            final_errno = 1
+            if result.returncode == 127:
+                msg: str = "Command not found"
+            else:
+                msg = f"errno {result.returncode}"
+
+            print(
+                f"{Fore.RED}  - {repo_path}: {msg}: "
+                f"{cmd_display}{Fore.RESET}"
+            )
+
+    return final_errno
+
+
+def main() -> None:
+    """
+    The main entry point for the command-line interface.
+    """
+    # Optional: setproctitle
+    try:
+        # pylint: disable=import-outside-toplevel
+        from setproctitle import setproctitle
+        setproctitle(Path(sys.argv[0]).name)  # type: ignore
+    except ImportError:
+        # Optional dependency 'setproctitle' is not installed.
+        pass
+
+    if HAS_COLORAMA:
+        colorama_init()
+
+    # Disable git prompting
+    os.environ["GIT_TERMINAL_PROMPT"] = "0"
+
+    args: argparse.Namespace = parse_args()
+
+    # Verify that the execution command exists
+    if args.exec_cmd and not shutil.which(args.exec_cmd[0]):
+        print(
+            f"Error: Command not found: '{args.exec_cmd[0]}'",
+            file=sys.stderr)
+        sys.exit(127)
+
+    # Discover Repositories
+    repos: set[Path] = discover_repos(args.directory.absolute(),
+                                      args.max_workers,
+                                      args.exclude_dir)
+
+    # setup background command list if needed
+    exec_bg_cmd: Optional[list[str]] = None
+    if args.bg and args.exec_cmd:
+        exec_bg_cmd = args.exec_cmd
+
+    if_exec_cmd: Optional[list[str]] = None
+    if args.if_exec:
+        if_exec_cmd = shlex.split(args.if_exec)
+
+    # Parallel Processing (Filter + Background Exec)
+    processed_repos: list[RepoContext] = execute_parallel_tasks(
+        repos,
+        exec_bg_cmd,
+        if_exec_cmd,
+        args.max_workers
+    )
+
+    execution_errors: list[tuple[Path, CommandResult]] = []
+
+    # Main Loop: Display results and run sequential commands
+    for context in processed_repos:
+        repo_path: Path = context.path
+
+        # Handle Background Execution Results
+        if context.bg_result:
+            output_display: str = format_bg_output(
+                repo_path, context.bg_result)
+            if output_display:
+                print(output_display, end="")
+
+            if context.bg_result.returncode != 0:
+                execution_errors.append((repo_path, context.bg_result))
+
+        # Handle Foreground Execution
+        if args.exec_cmd and not args.bg:
+            print(
+                f"{Fore.YELLOW}[EXEC] {repo_path}: "
+                f"{subprocess.list2cmdline(args.exec_cmd)}"
+                f"{Fore.RESET}"
+            )
+
+            # Run interactively/sequentially (capture=False allows interaction)
+            # However, for consistency with error tracking, we might want to
+            # capture. Usually --exec implies seeing output immediately.
+            try:
+                # We use subprocess.check_call to allow direct stdout/stderr
+                # flow unless we want to capture for error summary. To match
+                # previous logic, we let it flow to stdout.
+                subprocess.check_call(
+                    args.exec_cmd,
+                    cwd=repo_path
+                )
+            except subprocess.CalledProcessError as err:
+                # Construct a dummy result for the error summary
+                failed_res: CommandResult = CommandResult(
+                    command=args.exec_cmd,
+                    returncode=err.returncode
+                )
+                execution_errors.append((repo_path, failed_res))
+            except FileNotFoundError:
+                failed_res = CommandResult(
+                    command=args.exec_cmd,
+                    returncode=127
+                )
+                execution_errors.append((repo_path, failed_res))
+
+        # If no commands were run, just list the repo
+        if not args.exec_cmd:
+            print(repo_path)
+
+    # Final Error Summary
+    sys.exit(print_error_summary(execution_errors))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (KeyboardInterrupt, BrokenPipeError):
+        print("\nInterrupting...", file=sys.stderr)
+        sys.exit(1)

@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "git-rexec"
+version = "1.0.0"
+description = "Locate Git repositories and execute commands against them in parallel."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "GPL-3.0-or-later"}
+authors = [
+  {name = "James Cherti"}
+]
+keywords = ["git", "parallel", "executor", "automation"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+  "Operating System :: OS Independent",
+  "Environment :: Console",
+  "Topic :: Software Development :: Version Control :: Git"
+]
+dependencies = []
+
+[project.optional-dependencies]
+extras = ["colorama", "setproctitle"]
+
+[project.urls]
+Homepage = "https://github.com/jamescherti/git-rexec"
+
+[tool.setuptools]
+script-files = ["git-rexec"]
