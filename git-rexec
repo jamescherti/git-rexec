@@ -353,7 +353,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "-q", "--quiet",
         action="store_true",
-        help="Suppress informational headers like [EXEC] and [EXEC-P]",
+        help=("Quiet mode. Suppresses the informational tracking headers "
+              "([EXEC] and [EXEC-P]) that prefix execution output."),
         default=False
     )
     parser.add_argument(
@@ -490,7 +491,7 @@ def main() -> None:
                 )
                 execution_errors.append((repo_path, failed_res))
             except FileNotFoundError:
-                failed_res = CommandResult(
+                failed_res: CommandResult = CommandResult(
                     command=args.exec_cmd,
                     returncode=127
                 )
