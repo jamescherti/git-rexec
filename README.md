@@ -1,4 +1,4 @@
-# git-rexec: Find Git repositories and execute commands against them in parallel
+# git-rexec: Find Git Repositories and Execute Commands Against Them, either Sequentially or in Parallel
 
 The [git-rexec](https://github.com/jamescherti/git-rexec/) tool locates Git repositories within a directory structure and executes commands against them.
 
@@ -13,18 +13,12 @@ For example:
   git-rexec -- git commit -a
   ```
 
-It supports:
-
-- Conditional repository filtering,
-- Parallel background execution,
-- Sequential foreground execution.
-
 ## Features
 
 - Recursively discover Git repositories starting from a specified root directory.
 - Execute shell commands across multiple repositories in parallel using worker threads.
 - Filter target repositories based on the exit code of a conditional check (`--if-exec`).
-- Exclude specific directory branches from the search path.
+- Exclude specific directories from the search path.
 - Optional: Can leverage `fd` for fast directory traversal if installed, falling back to standard Python path resolution otherwise.
 
 ## Installation
