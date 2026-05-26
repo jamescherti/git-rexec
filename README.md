@@ -1,6 +1,6 @@
 # git-rexec: Git Repository Command Executor
 
-The `git-rexec` tool locates Git repositories within a directory structure and executes commands against them.
+The [git-rexec](https://github.com/jamescherti/git-rexec/) tool locates Git repositories within a directory structure and executes commands against them.
 
 It supports:
 - Conditional repository filtering,
@@ -120,5 +120,4 @@ Copyright (C) 2019-2026 [James Cherti](https://www.jamescherti.com).
 
 ## Links
 
-- [Git-rexec @PyPI](https://pypi.org/project/git-rexec/)
-- [Git-rexec @GitHub](https://github.com/jamescherti/git-rexec/)
+- [git-rexec @GitHub](https://github.com/jamescherti/git-rexec/)
