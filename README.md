@@ -49,13 +49,13 @@ pip install --user git+https://github.com/jamescherti/git-rexec
 
 ### System Dependencies
 
-* `git`: Required for repository validation and execution.
-* `fd` (Optional): Highly recommended for faster repository discovery.
+- `git`: Required for repository validation and execution.
+- `fd` (Optional): Highly recommended for faster repository discovery.
 
 ### Python Dependencies (Optional)
 
-* `colorama`: Provides color-coded terminal output.
-* `setproctitle`: Sets the process title for process monitoring tools.
+- `colorama`: Provides color-coded terminal output.
+- `setproctitle`: Sets the process title for process monitoring tools.
 
 You can install the optional Python dependencies via pip:
 
@@ -75,16 +75,17 @@ git-rexec [OPTIONS] [exec_cmd ...]
 
 ### Positional Arguments
 
-* `exec_cmd`: The shell command to execute within each discovered Git repository. You can use `--` to pass options directly to the command. If omitted, the script simply prints the paths of the discovered repositories.
+- `exec_cmd`: The shell command to execute within each discovered Git repository. You can use `--` to pass options directly to the command. If omitted, the script simply prints the paths of the discovered repositories.
 
 ### Options
 
-* `-C, --directory <path>`: The root directory to start searching for Git repositories. Defaults to the current working directory (`.`).
-* `--exclude-dir <path>`: Exclude a specific directory and all of its subdirectories from the search. This option can be provided multiple times.
-* `-p, --parallel`: Execute the command in parallel using threads.
-* `-i, --if-exec <command>`: Execute the main command only if this check command returns an exit code of `0`.
-* `-j, --jobs <int>`: The maximum number of concurrent workers/processors to use for parallel execution. Defaults to the number of CPU cores available.
-* `-h, --help`: Show the help message and exit.
+- `-C, --directory <path>`: The root directory to start searching for Git repositories. Defaults to the current working directory (`.`).
+- `--exclude-dir <path>`: Exclude a specific directory and all of its subdirectories from the search. This option can be provided multiple times.
+- `-p, --parallel`: Execute the command in parallel using threads.
+- `-i, --if-exec <command>`: Execute the main command only if this check command returns an exit code of `0`.
+- `-j, --jobs <int>`: The maximum number of concurrent workers/processors to use for parallel execution. Defaults to the number of CPU cores available.
+- `-h, --help`: Show the help message and exit.
+- `-q, --quiet`: Quiet mode. Suppresses the informational tracking headers (`[EXEC]` and `[EXEC-P]`) that prefix execution output. In sequential mode, it hides the `[EXEC]` repository delimiter line entirely; in parallel mode (`-p`), it strips the yellow `[EXEC-P]` header track and removes the four-space indentation, printing only the raw, unindented stdout and stderr streams. This flag has no effect when no execution command is supplied, allowing discovered repository paths to print normally.
 
 ## Examples
 
