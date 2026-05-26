@@ -1,8 +1,20 @@
-# git-rexec: Git Repository Command Executor
+# git-rexec: Find Git repositories and execute commands against them in parallel
 
 The [git-rexec](https://github.com/jamescherti/git-rexec/) tool locates Git repositories within a directory structure and executes commands against them.
 
+For example:
+- Fetch updates for all repositories in parallel across all subdirectories:
+  ```bash
+  git-rexec --parallel -- git fetch --all
+  ```
+
+- Sequentially commit to all repositories across all subdirectories:
+  ```bash
+  git-rexec -- git commit -a
+  ```
+
 It supports:
+
 - Conditional repository filtering,
 - Parallel background execution,
 - Sequential foreground execution.
@@ -68,12 +80,12 @@ git-rexec [OPTIONS] [exec_cmd ...]
 
 ### Options
 
-- `-C, --directory <path>`: The root directory to start searching for Git repositories. Defaults to the current working directory (`.`).
-- `--exclude-dir <path>`: Exclude a specific directory and all of its subdirectories from the search. This option can be provided multiple times.
-- `-b, --bg`: Execute the command in the background (parallel execution).
-- `-i, --if-exec <command>`: Execute the main command only if this check command returns an exit code of `0`.
-- `-j, --jobs <int>`: The maximum number of concurrent workers/processors to use for parallel execution. Defaults to the number of CPU cores available.
-- `-h, --help`: Show the help message and exit.
+* `-C, --directory <path>`: The root directory to start searching for Git repositories. Defaults to the current working directory (`.`).
+* `--exclude-dir <path>`: Exclude a specific directory and all of its subdirectories from the search. This option can be provided multiple times.
+* `-p, --parallel`: Execute the command in parallel using threads.
+* `-i, --if-exec <command>`: Execute the main command only if this check command returns an exit code of `0`.
+* `-j, --jobs <int>`: The maximum number of concurrent workers/processors to use for parallel execution. Defaults to the number of CPU cores available.
+* `-h, --help`: Show the help message and exit.
 
 ## Examples
 
@@ -81,35 +93,30 @@ List all Git repositories in the current directory tree:
 
 ```bash
 git-rexec
-
 ```
 
 Fetch updates for all repositories in parallel:
 
 ```bash
-git-rexec --bg -- git fetch --all
-
+git-rexec --parallel -- git fetch --all
 ```
 
 Run a command only if the repository has uncommitted changes:
 
 ```bash
 git-rexec --if-exec "git status --porcelain" -- echo "This repository has uncommitted changes"
-
 ```
 
 Execute a command in a specific directory while excluding another:
 
 ```bash
-git-rexec -C ~/projects --exclude-dir ~/projects/archive --bg -- git status
-
+git-rexec -C ~/projects --exclude-dir ~/projects/archive --parallel -- git status
 ```
 
 Clean all repositories using a specific number of threads:
 
 ```bash
-git-rexec  -j 4 --bg -- git clean -fdx
-
+git-rexec  -j 4 --parallel -- git clean -fdx
 ```
 
 ## License
@@ -120,4 +127,4 @@ Copyright (C) 2019-2026 [James Cherti](https://www.jamescherti.com).
 
 ## Links
 
-- [git-rexec @GitHub](https://github.com/jamescherti/git-rexec/)
+- [git-rexec @GitHub](https://github.com/jamescherti/git-rexec)
