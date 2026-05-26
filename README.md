@@ -3,14 +3,14 @@
 The [git-rexec](https://github.com/jamescherti/git-rexec/) tool locates Git repositories within a directory structure and executes commands against them, either sequentially or in parallel.
 
 For example:
-- Fetch updates in parallel across all discovered Git repositories, processing 5 repositories at a time:
+- Fetch updates in parallel (`-p` or `--parallel`) across all discovered Git repositories, processing 5 repositories at a time:
   ```bash
   git-rexec -j 5 --parallel -- git fetch
   ```
 
-- Check the status of all discovered Git repositories in parallel:
+- Check the status of all discovered Git repositories in parallel (`-p` or `--parallel`):
   ```
-  git-rexec --parallel -- git status
+  git-rexec -p -- git status
   ```
 
 - Push local changes across all discovered Git repositories in parallel, processing 5 repositories at a time:
