@@ -35,7 +35,6 @@ For example:
 Download the `git-rexec` script, make it executable, and copy it to a directory in your system PATH (e.g., `/usr/local/bin`):
 
 ```bash
-chmod +x git-rexec
 sudo cp git-rexec /usr/local/bin/
 ```
 
