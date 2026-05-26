@@ -2,7 +2,7 @@
 
 The [git-rexec](https://github.com/jamescherti/git-rexec/) tool locates Git repositories within a directory structure and executes commands against them, either sequentially or in parallel.
 
-If this helps your workflow, please support the project by **⭐ starring git-rexec on GitHub** and sharing it on your website, blog, Mastodon, Reddit, X, LinkedIn, or other social media platforms to help other Git users discover its benefits.
+If this helps your workflow, please support the project by **⭐ starring git-rexec on GitHub** and sharing it on your website, blog, Mastodon, Reddit, X, LinkedIn, or other social media platforms to help more Git users discover its benefits.
 
 For example:
 - Fetch updates in parallel (`-p` or `--parallel`) across all discovered Git repositories, processing 5 repositories at a time (`-j 5`):
@@ -18,6 +18,16 @@ For example:
 - Push local changes across all discovered Git repositories in parallel, processing 5 repositories at a time:
   ```bash
   git-rexec -j 5 --parallel -- git push
+  ```
+
+- Execute a command in a specific directory while excluding another, sequentially:
+  ```bash
+  git-rexec -C ~/projects --exclude-dir ~/projects/archive --parallel -- git status
+  ```
+
+- Clean all discovered Git repositories, 6 repositories at a time:
+  ```bash
+  git-rexec  -j 6 --parallel -- git clean -fdx
   ```
 
 ## Features
@@ -87,32 +97,6 @@ git-rexec [OPTIONS] [exec_cmd ...]
 - `-j, --jobs <int>`: The maximum number of concurrent workers/processors to use for parallel execution. Defaults to the number of CPU cores available.
 - `-h, --help`: Show the help message and exit.
 - `-q, --quiet`: Quiet mode. Suppresses the informational tracking headers (`[EXEC]` and `[EXEC-P]`) that prefix execution output. In sequential mode, it hides the `[EXEC]` repository delimiter line entirely; in parallel mode (`-p`), it strips the yellow `[EXEC-P]` header track and removes the four-space indentation, printing only the raw, unindented stdout and stderr streams. This flag has no effect when no execution command is supplied, allowing discovered repository paths to print normally.
-
-## Examples
-
-List all Git repositories in the current directory tree:
-
-```bash
-git-rexec
-```
-
-Fetch updates for all repositories in parallel:
-
-```bash
-git-rexec --parallel -- git fetch --all
-```
-
-Execute a command in a specific directory while excluding another:
-
-```bash
-git-rexec -C ~/projects --exclude-dir ~/projects/archive --parallel -- git status
-```
-
-Clean all repositories using a specific number of threads:
-
-```bash
-git-rexec  -j 4 --parallel -- git clean -fdx
-```
 
 ## License
 
