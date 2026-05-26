@@ -1,16 +1,26 @@
-# git-rexec: Find Git Repositories and Execute Commands Against Them, either Sequentially or in Parallel
+# git-rexec: Find Git and Execute Commands Against Them, either Sequentially or in Parallel
 
-The [git-rexec](https://github.com/jamescherti/git-rexec/) tool locates Git repositories within a directory structure and executes commands against them.
+The [git-rexec](https://github.com/jamescherti/git-rexec/) tool locates Git repositories within a directory structure and executes commands against them, either sequentially or in parallel.
 
 For example:
-- Fetch updates for all repositories in parallel across all subdirectories:
+- Fetch updates for all repositories in parallel across all subdirectories, processing 5 repositories at a time:
   ```bash
-  git-rexec --parallel -- git fetch --all
+  git-rexec -j 5 --parallel -- git fetch --all
   ```
 
-- Sequentially commit to all repositories across all subdirectories:
+- Check the status of all discovered Git repositories in parallel:
+  ```
+  git-rexec --parallel -- git status
+  ```
+
+- Sequentially commit changes across all subdirectories, filtering only for repositories that have modifications (one by one, avoiding parallel execution because committing requires interactive user input):
   ```bash
-  git-rexec -- git commit -a
+  git-rexec --if-exec "sh -c '! git status --porcelain'" -- git commit -a
+  ```
+
+- Push local changes across all discovered Git repositories in parallel, processing 5 repositories at a time:
+  ```bash
+  git-rexec -j 5 --parallel -- git push
   ```
 
 ## Features
