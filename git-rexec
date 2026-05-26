@@ -181,26 +181,31 @@ def run_command_get_output(repo_path: Path, cmd_list: list[str],
         )
 
 
-def format_parallel_output(repo_path: Path, result: CommandResult) -> str:
+def format_parallel_output(
+        repo_path: Path, result: CommandResult, quiet: bool = False) -> str:
     """Format the output of a parallel command for display.
 
     :param repo_path: The repository path.
     :param result: The execution result.
+    :param quiet: Suppress informational headers.
     :return: Formatted string ready for printing.
     """
-    header: str = f"{Fore.YELLOW}[EXEC-P] {repo_path}"
-    cmd_str: str = " ".join(result.command)
-    header += f": {cmd_str}{Fore.RESET}\n"
-
     raw_output: str = result.stdout + result.stderr
     if not raw_output and result.returncode == 0:
         return ""
 
-    indent: str = " " * 4
     formatted: str = raw_output.replace("\t", "    ").rstrip()
     if formatted:
         formatted += "\n"
 
+    if quiet:
+        return formatted
+
+    header: str = f"{Fore.YELLOW}[EXEC-P] {repo_path}"
+    cmd_str: str = " ".join(result.command)
+    header += f": {cmd_str}{Fore.RESET}\n"
+
+    indent: str = " " * 4
     indented_body: str = textwrap.indent(formatted, prefix=indent)
     return header + indented_body
 
@@ -346,6 +351,12 @@ def parse_args() -> argparse.Namespace:
         default=(cpu_count() or 1)
     )
     parser.add_argument(
+        "-q", "--quiet",
+        action="store_true",
+        help="Suppress informational headers like [EXEC] and [EXEC-P]",
+        default=False
+    )
+    parser.add_argument(
         "exec_cmd",
         type=str,
         nargs="*",
@@ -444,7 +455,7 @@ def main() -> None:
         # Handle Background Execution Results
         if context.parallel_result:
             output_display: str = format_parallel_output(
-                repo_path, context.parallel_result)
+                repo_path, context.parallel_result, args.quiet)
             if output_display:
                 print(output_display, end="")
 
@@ -453,11 +464,12 @@ def main() -> None:
 
         # Handle Foreground Execution
         if args.exec_cmd and not args.parallel:
-            print(
-                f"{Fore.YELLOW}[EXEC] {repo_path}: "
-                f"{subprocess.list2cmdline(args.exec_cmd)}"
-                f"{Fore.RESET}"
-            )
+            if not args.quiet:
+                print(
+                    f"{Fore.YELLOW}[EXEC] {repo_path}: "
+                    f"{subprocess.list2cmdline(args.exec_cmd)}"
+                    f"{Fore.RESET}"
+                )
 
             # Run interactively/sequentially (capture=False allows interaction)
             # However, for consistency with error tracking, we might want to
