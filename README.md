@@ -10,12 +10,12 @@ For example:
   git-rexec -p -- git status -s
   ```
 
-- Fetch updates from remotes across all discovered repositories, limiting the concurrency to 5 background jobs (`-j 5`), which helps avoid network congestion or server rate limits when communicating with upstream Git remotes:
+- Fetch updates across all discovered repositories, limiting the concurrency to 5 background jobs (`-j 5`), which helps avoid network congestion or server rate limits when communicating with upstream Git remotes:
   ```bash
   git-rexec -j 5 --parallel -- git fetch
   ```
 
-- Target a specific base directory (`~/projects`) using the `-C` flag to recursively discover repositories within it, while explicitly excluding a specific subfolder (`~/projects/archive`). This example executes `git status` in parallel for all discovered repositories except those within the excluded path:
+- Target a specific base directory (`~/projects`) using the `-C` flag to recursively discover repositories within it, while explicitly excluding a specific subfolder (`~/projects/archive`). This example executes `git status -s` in parallel for all discovered repositories except those within the excluded path:
   ```bash
   git-rexec -C ~/projects --exclude-dir ~/projects/archive --parallel -- git status -s
   ```
