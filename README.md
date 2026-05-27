@@ -20,7 +20,7 @@ For example:
   git-rexec -C ~/projects --exclude-dir ~/projects/archive --parallel -- git status -s
   ```
 
-- Conditionally execute a command in parallel across all discovered repositories using the `--if-exec` filter. In this example, the `git-rexec` evaluates whether a `README.md` file exists in the repository (`sh -c "test -f README.md"`). If the condition returns an exit status of 0 (success), it counts the number of lines in that file (`wc -l README.md`):
+- Evaluate whether a `README.md` file exists in the repository (`sh -c "test -f README.md"`). If the condition returns an exit status of 0 (success), it counts the number of lines in that file (`wc -l README.md`):
   ```bash
   git-rexec --if-exec 'sh -c "test -f README.md"' --parallel -- wc -l README.md
   ```
