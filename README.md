@@ -4,7 +4,7 @@ The [git-rexec](https://github.com/jamescherti/git-rexec/) tool locates Git repo
 
 If this helps your workflow, please support the project by **⭐ starring git-rexec on GitHub** and sharing it on your website, blog, Mastodon, Reddit, X, LinkedIn, or other social media platforms to help more Git users discover its benefits.
 
-For example:
+Here are examples demonstrating how to use `git-rexec`:
 - Execute `git status -s` across all discovered Git repositories (found by searching recursively under the current working directory) in parallel (`-p` or `--parallel`):
   ```
   git-rexec -p -- git status -s
