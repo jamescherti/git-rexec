@@ -2,8 +2,6 @@
 
 The [git-rexec](https://github.com/jamescherti/git-rexec/) command-line tool that recursively locates Git repositories within a directory and executes commands against them, either sequentially or in parallel.
 
-If this helps your workflow, please support the project by **⭐ starring git-rexec on GitHub** and sharing it on your website, blog, Mastodon, Reddit, X, LinkedIn, or other social media platforms to help more Git users discover its benefits.
-
 Here are examples demonstrating how to use `git-rexec`:
 - Execute `git status -s` across all discovered Git repositories (found by searching recursively under the current working directory) in parallel (`-p` or `--parallel`):
   ```
@@ -24,6 +22,8 @@ Here are examples demonstrating how to use `git-rexec`:
   ```bash
   git-rexec --if-exec 'sh -c "test -f README.md"' --parallel -- wc -l README.md
   ```
+
+If this helps your workflow, please support the project by **⭐ starring git-rexec on GitHub** and sharing it on your website, blog, Mastodon, Reddit, X, LinkedIn, or other social media platforms to help more Git users discover its benefits.
 
 ## Features
 
