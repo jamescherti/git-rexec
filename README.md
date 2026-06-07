@@ -48,7 +48,7 @@ sudo cp git-rexec /usr/local/bin/
 Install the package directly from the Git repository using `pip`:
 
 ```bash
-pip install --user git+https://github.com/jamescherti/git-rexec
+pip install --user git-rexec
 ```
 
 ## Dependencies
