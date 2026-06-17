@@ -100,24 +100,33 @@ def git_toplevel(repo_path: Path) -> Optional[Path]:
         return None
 
 
-def git_fd_find_repo(path: Path, max_workers: int) -> set[Path]:
+def git_fd_find_repo(path: Path, max_workers: int,
+                     include_sub_repos: bool) -> set[Path]:
     """Find all Git repositories in 'path' using fd.
 
     :param path: The root directory to search for Git repositories.
     :param max_workers: Maximum number of threads for fd.
+    :param include_sub_repos: Whether to include sub-repositories.
     :return: set of paths to Git repositories.
     """
     path_str: str = str(path)
+
+    cmd: list[str] = [
+        'fd', '--hidden',
+        '--no-ignore', '^\\.git$',
+        '--absolute-path',
+        '--threads', str(max_workers)
+    ]
+
+    if not include_sub_repos:
+        cmd.extend(['--type', 'd'])
+
+    cmd.append(path_str)
+
     try:
         # Use fd to find .git directories efficiently
         proc: subprocess.CompletedProcess[str] = subprocess.run(
-            [
-                'fd', '--type', 'd', '--hidden',
-                '--no-ignore', '^\\.git$',
-                '--absolute-path',
-                '--threads', str(max_workers),
-                path_str
-            ],
+            cmd,
             capture_output=True,
             text=True,
             check=False
@@ -134,16 +143,17 @@ def git_fd_find_repo(path: Path, max_workers: int) -> set[Path]:
     }
 
 
-def git_py_find_repo(root: Path) -> set[Path]:
+def git_py_find_repo(root: Path, include_sub_repos: bool) -> set[Path]:
     """Recursively find all Git repositories under the root path using Python.
 
     :param root: Directory to search under.
+    :param include_sub_repos: Whether to include sub-repositories.
     :return: set of paths to Git repositories.
     """
     return {
         git_dir.absolute().parent
         for git_dir in root.rglob(".git")
-        if git_dir.is_dir()
+        if (include_sub_repos and git_dir.is_file()) or git_dir.is_dir()
     }
 
 
@@ -242,12 +252,14 @@ def process_repo(repo_path: Path, exec_parallel_cmd: Optional[list[str]],
 
 def discover_repos(directory: Path,
                    max_workers: int,
-                   exclude_dirs: list[str]) -> set[Path]:
-    """Discover Git repositories starting from 'directory' and apply exclusions.
+                   exclude_dirs: list[str],
+                   include_sub_repos: bool) -> set[Path]:
+    """Discover Git repositories starting from directory and apply exclusions.
 
     :param directory: The root directory for search.
     :param max_workers: Maximum number of threads/workers.
     :param exclude_dirs: Directories to exclude.
+    :param include_sub_repos: Whether to include sub-repositories.
     :return: A set of repository root paths.
     """
     repos: set[Path] = set()
@@ -257,9 +269,9 @@ def discover_repos(directory: Path,
     if toplevel:
         repos = {toplevel}
     elif shutil.which("fd"):
-        repos = git_fd_find_repo(directory, max_workers)
+        repos = git_fd_find_repo(directory, max_workers, include_sub_repos)
     else:
-        repos = git_py_find_repo(directory)
+        repos = git_py_find_repo(directory, include_sub_repos)
 
     # Filter out excluded directories
     if not exclude_dirs:
@@ -303,7 +315,7 @@ def execute_parallel_tasks(
                 result: Optional[RepoContext] = future.result()
                 if result:
                     results.append(result)
-            except Exception as exc:
+            except (OSError, ValueError) as exc:
                 print(f"Error processing repository {repo_path}: {exc}",
                       file=sys.stderr)
 
@@ -355,6 +367,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help=("Quiet mode. Suppresses the informational tracking headers "
               "([EXEC] and [EXEC-P]) that prefix execution output."),
+        default=False
+    )
+    parser.add_argument(
+        "-s", "--include-sub-repos",
+        action="store_true",
+        help="Include sub-repositories (e.g., Git worktrees and submodules)",
         default=False
     )
     parser.add_argument(
@@ -428,7 +446,8 @@ def main() -> None:
     # Discover Repositories
     repos: set[Path] = discover_repos(args.directory.absolute(),
                                       args.max_workers,
-                                      args.exclude_dir)
+                                      args.exclude_dir,
+                                      args.include_sub_repos)
 
     # setup background command list if needed
     exec_parallel_cmd: Optional[list[str]] = None
