@@ -38,7 +38,6 @@ If this helps your workflow, please support the project by **⭐ starring git-re
 - Execute shell commands across multiple repositories in parallel using worker threads.
 - Filter target repositories based on the exit code of a conditional check (`--if-exec`).
 - Exclude specific directories from the search path.
-- Optional: Can leverage `fd` for fast directory traversal if installed, falling back to standard Python path resolution otherwise.
 
 ## Installation
 
@@ -63,7 +62,6 @@ pip install --user git-rexec
 ### System Dependencies
 
 - `git`: Required for repository validation and execution.
-- `fd` (Optional): Highly recommended for faster repository discovery.
 
 ### Python Dependencies (Optional)
 

@@ -6,6 +6,7 @@
 #
 # Author: James Cherti
 # URL: https://github.com/jamescherti/git-rexec
+# Version: 1.0.0
 #
 # Copyright (C) 2019-2026 James Cherti
 #
@@ -100,61 +101,95 @@ def git_toplevel(repo_path: Path) -> Optional[Path]:
         return None
 
 
-def git_fd_find_repo(path: Path, max_workers: int,
-                     include_sub_repos: bool) -> set[Path]:
-    """Find all Git repositories in 'path' using fd.
-
-    :param path: The root directory to search for Git repositories.
-    :param max_workers: Maximum number of threads for fd.
-    :param include_sub_repos: Whether to include sub-repositories.
-    :return: set of paths to Git repositories.
-    """
-    path_str: str = str(path)
-
-    cmd: list[str] = [
-        'fd', '--hidden',
-        '--no-ignore', '^\\.git$',
-        '--absolute-path',
-        '--threads', str(max_workers)
-    ]
-
-    if not include_sub_repos:
-        cmd.extend(['--type', 'd'])
-
-    cmd.append(path_str)
-
-    try:
-        # Use fd to find .git directories efficiently
-        proc: subprocess.CompletedProcess[str] = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=False
-        )
-    except FileNotFoundError as err:
-        print(f"Error: {err}", file=sys.stderr)
-        sys.exit(1)
-
-    # Use a set comprehension to remove duplicates and normalize paths
-    # efficiently
-    return {
-        Path(git_dir).parent
-        for git_dir in proc.stdout.splitlines()
-    }
-
-
-def git_py_find_repo(root: Path, include_sub_repos: bool) -> set[Path]:
+def git_py_find_repo(root: Path) -> tuple[set[Path], set[Path]]:
     """Recursively find all Git repositories under the root path using Python.
 
     :param root: Directory to search under.
-    :param include_sub_repos: Whether to include sub-repositories.
-    :return: set of paths to Git repositories.
+    :return: A tuple containing standard repository paths and sub-repository
+    paths.
     """
-    return {
-        git_dir.absolute().parent
-        for git_dir in root.rglob(".git")
-        if (include_sub_repos and git_dir.is_file()) or git_dir.is_dir()
-    }
+    repos: set[Path] = set()
+    sub_repos: set[Path] = set()
+
+    for dirpath, dirnames, filenames in os.walk(root):
+        if ".git" in dirnames:
+            repos.add(Path(dirpath).absolute())
+        elif ".git" in filenames:
+            sub_repos.add(Path(dirpath).absolute())
+        else:
+            continue
+
+        # Clear dirnames to prevent os.walk from descending into
+        # subdirectories
+        dirnames.clear()
+
+    return repos, sub_repos
+
+def get_sub_repos(repo_path: Path) -> set[Path]:
+    """Extract worktrees and submodules from a Git repository.
+
+    :param repo_path: The path to the standard repository.
+    :return: A set of absolute paths to worktrees and submodules.
+    """
+    sub_repos: set[Path] = set()
+
+    # Discover worktrees
+    # pylint: disable=too-many-try-statements
+    try:
+        wt_proc: subprocess.CompletedProcess[str] = subprocess.run(
+            ["git", "-C", str(repo_path), "worktree", "list", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        current_wt: Optional[Path] = None
+        is_bare: bool = False
+
+        for line in wt_proc.stdout.splitlines():
+            line = line.strip()
+
+            # Git porcelain separates blocks with a blank line
+            if not line:
+                if current_wt and not is_bare \
+                        and current_wt != repo_path.resolve():
+                    sub_repos.add(current_wt)
+                # Reset state for the next block
+                current_wt = None
+                is_bare = False
+                continue
+
+            if line.startswith("worktree "):
+                current_wt = Path(line[9:]).resolve()
+            elif line == "bare":
+                is_bare = True
+
+        # Process the final block in case the output lacks a trailing newline
+        if current_wt and not is_bare and current_wt != repo_path.resolve():
+            sub_repos.add(current_wt)
+
+    except subprocess.CalledProcessError:
+        pass
+
+    # Discover submodules
+    try:
+        sm_proc: subprocess.CompletedProcess[str] = subprocess.run(
+            ["git", "-C", str(repo_path),
+             "submodule", "foreach", "--quiet", "pwd"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        for line in sm_proc.stdout.splitlines():
+            sm_path: Path = Path(line.strip()).resolve()
+            sub_repos.add(sm_path)
+
+    except subprocess.CalledProcessError:
+        pass
+
+    return sub_repos
+
 
 
 def run_command_get_output(repo_path: Path, cmd_list: list[str],
@@ -263,15 +298,28 @@ def discover_repos(directory: Path,
     :return: A set of repository root paths.
     """
     repos: set[Path] = set()
+    worktrees: set[Path] = set()
 
     # Discover all repositories
     toplevel: Optional[Path] = git_toplevel(directory)
     if toplevel:
         repos = {toplevel}
-    elif shutil.which("fd"):
-        repos = git_fd_find_repo(directory, max_workers, include_sub_repos)
     else:
-        repos = git_py_find_repo(directory, include_sub_repos)
+        repos, worktrees = git_py_find_repo(directory)
+
+    # Extract and append sub-repositories concurrently if requested
+    if include_sub_repos:
+        sub_repos: set[Path] = set()
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures: list[Future[set[Path]]] = [
+                executor.submit(get_sub_repos, repo)
+                for repo in repos | worktrees
+            ]
+            for future in as_completed(futures):
+                result: set[Path] = future.result()
+                sub_repos.update(result)
+
+        repos.update(sub_repos)
 
     # Filter out excluded directories
     if not exclude_dirs:
