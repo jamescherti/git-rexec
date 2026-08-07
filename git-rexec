@@ -125,6 +125,7 @@ def git_py_find_repo(root: Path) -> tuple[set[Path], set[Path]]:
 
     return repos, sub_repos
 
+
 def get_sub_repos(repo_path: Path) -> set[Path]:
     """Extract worktrees and submodules from a Git repository.
 
@@ -189,7 +190,6 @@ def get_sub_repos(repo_path: Path) -> set[Path]:
         pass
 
     return sub_repos
-
 
 
 def run_command_get_output(repo_path: Path, cmd_list: list[str],
@@ -424,6 +424,19 @@ def parse_args() -> argparse.Namespace:
         default=False
     )
     parser.add_argument(
+        "--print",
+        action="store_true",
+        help="Print the paths (only when no command is provided)",
+        default=False
+    )
+    parser.add_argument(
+        "--print0",
+        action="store_true",
+        help=("Separate the paths with a null character (only when no "
+              "command is provided)"),
+        default=False
+    )
+    parser.add_argument(
         "exec_cmd",
         type=str,
         nargs="*",
@@ -483,6 +496,11 @@ def main() -> None:
     os.environ["GIT_TERMINAL_PROMPT"] = "0"
 
     args: argparse.Namespace = parse_args()
+
+    # Check for empty action
+    if not args.exec_cmd and not args.print and not args.print0:
+        print("Nothing to do.", file=sys.stderr)
+        sys.exit(0)
 
     # Verify that the execution command exists
     if args.exec_cmd and not shutil.which(args.exec_cmd[0]):
@@ -566,7 +584,10 @@ def main() -> None:
 
         # If no commands were run, just list the repo
         if not args.exec_cmd:
-            print(repo_path)
+            if args.print0:
+                print(repo_path, end="\0")
+            elif args.print:
+                print(repo_path)
 
     # Final Error Summary
     sys.exit(print_error_summary(execution_errors))

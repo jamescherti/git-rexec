@@ -29,6 +29,11 @@ Here are examples demonstrating how to use `git-rexec`:
   git-rexec --if-exec 'sh -c "test -f README.md"' --parallel -- wc -l README.md
   ```
 
+- Print the paths of all discovered Git repositories:
+  ```bash
+  git-rexec --print
+  ```
+
 If this helps your workflow, please support the project by **⭐ starring git-rexec on GitHub** and sharing it on your website, blog, Mastodon, Reddit, X, LinkedIn, or other social media platforms to help more Git users discover its benefits.
 
 ## Features
@@ -38,6 +43,7 @@ If this helps your workflow, please support the project by **⭐ starring git-re
 - Execute shell commands across multiple repositories in parallel using worker threads.
 - Filter target repositories based on the exit code of a conditional check (`--if-exec`).
 - Exclude specific directories from the search path.
+- Export discovered repository paths for integration with other shell tools (using `--print` or `--print0`).
 
 ## Installation
 
