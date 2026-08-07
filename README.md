@@ -102,6 +102,8 @@ git-rexec [OPTIONS] [exec_cmd ...]
 - `-s, --include-sub-repos`: Include sub-repositories (e.g., Git worktrees and submodules) in the search target list.
 - `-h, --help`: Show the help message and exit.
 - `-q, --quiet`: Quiet mode. Suppresses the informational tracking headers (`[EXEC]` and `[EXEC-P]`) that prefix execution output. In sequential mode, it hides the `[EXEC]` repository delimiter line entirely; in parallel mode (`-p`), it strips the yellow `[EXEC-P]` header track and removes the four-space indentation, printing only the raw, unindented stdout and stderr streams. This flag has no effect when no execution command is supplied, allowing discovered repository paths to print normally.
+- `--print`: Print the paths (only when no command is provided)
+- `--print0`: Separate the paths with a null character (only when no command is provided)
 
 ## License
 
