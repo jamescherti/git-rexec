@@ -597,6 +597,9 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
-    except (KeyboardInterrupt, BrokenPipeError):
+    except KeyboardInterrupt:
         print("\nInterrupting...", file=sys.stderr)
-        sys.exit(1)
+        sys.exit(130)
+    except BrokenPipeError:
+        print("\nInterrupting...", file=sys.stderr)
+        sys.exit(141)
