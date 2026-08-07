@@ -113,7 +113,7 @@ options:
                         Execute commands only if this check returns exit code 0.
   -j, --jobs MAX_WORKERS
                         Maximum number of processors/workers to use
-  -q, --quiet           Quiet mode. Suppresses the informational tracking headers ([EXEC] and [EXEC-P]) that prefix execution output.
+  -q, --quiet           Quiet mode. Suppresses the informational log prefixes ([EXEC] and [EXEC-P]) that precede execution output.
   -s, --include-sub-repos
                         Include sub-repositories (e.g., Git worktrees and submodules)
   --print               Print the paths (only when no command is provided)
