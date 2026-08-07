@@ -376,7 +376,8 @@ def parse_args() -> argparse.Namespace:
     :return: Parsed arguments.
     """
     parser: argparse.ArgumentParser = argparse.ArgumentParser(
-        description="Find git repos and execute commands.",
+        description=("Find Git repositories and execute commands against "
+                     "them in parallel."),
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(

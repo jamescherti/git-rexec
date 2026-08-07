@@ -83,7 +83,7 @@ pip install colorama setproctitle
 ## Usage
 
 ```bash
-git-rexec [OPTIONS] [exec_cmd ...]
+git-rexec [OPTIONS] -- [exec_cmd ...]
 ```
 
 *(Assuming the `git-rexec` script is executable and in your PATH.)*
@@ -94,16 +94,31 @@ git-rexec [OPTIONS] [exec_cmd ...]
 
 ### Options
 
-- `-C, --directory <path>`: The root directory to start searching for Git repositories. Defaults to the current working directory (`.`).
-- `--exclude-dir <path>`: Exclude a specific directory and all of its subdirectories from the search. This option can be provided multiple times.
-- `-p, --parallel`: Execute the command in parallel using threads.
-- `-i, --if-exec <command>`: Execute the main command only if this check command returns an exit code of `0`.
-- `-j, --jobs <int>`: The maximum number of concurrent workers/processors to use for parallel execution. Defaults to the number of CPU cores available.
-- `-s, --include-sub-repos`: Include sub-repositories (e.g., Git worktrees and submodules) in the search target list.
-- `-h, --help`: Show the help message and exit.
-- `-q, --quiet`: Quiet mode. Suppresses the informational tracking headers (`[EXEC]` and `[EXEC-P]`) that prefix execution output. In sequential mode, it hides the `[EXEC]` repository delimiter line entirely; in parallel mode (`-p`), it strips the yellow `[EXEC-P]` header track and removes the four-space indentation, printing only the raw, unindented stdout and stderr streams. This flag has no effect when no execution command is supplied, allowing discovered repository paths to print normally.
-- `--print`: Print the paths (only when no command is provided)
-- `--print0`: Separate the paths with a null character (only when no command is provided)
+```
+usage: git-rexec [-h] [-C DIRECTORY] [--exclude-dir EXCLUDE_DIR] [-p] [-i IF_EXEC] [-j MAX_WORKERS] [-q] [-s] [--print] [--print0] [exec_cmd ...]
+
+Find Git repositories and execute commands against them in parallel.
+
+positional arguments:
+  exec_cmd              The command to execute. You can use -- to pass options.
+
+options:
+  -h, --help            show this help message and exit
+  -C, --directory DIRECTORY
+                        Root directory to search (defaults to current directory)
+  --exclude-dir EXCLUDE_DIR
+                        Exclude a specific directory and all of its subdirectories
+  -p, --parallel        Execute the command in parallel using threads
+  -i, --if-exec IF_EXEC
+                        Execute commands only if this check returns exit code 0.
+  -j, --jobs MAX_WORKERS
+                        Maximum number of processors/workers to use
+  -q, --quiet           Quiet mode. Suppresses the informational tracking headers ([EXEC] and [EXEC-P]) that prefix execution output.
+  -s, --include-sub-repos
+                        Include sub-repositories (e.g., Git worktrees and submodules)
+  --print               Print the paths (only when no command is provided)
+  --print0              Separate the paths with a null character (only when no command is provided)
+```
 
 ## License
 
