@@ -501,7 +501,7 @@ def main() -> None:
     # Check for empty action
     if not args.exec_cmd and not args.print and not args.print0:
         print("Nothing to do.", file=sys.stderr)
-        sys.exit(0)
+        sys.exit(2)
 
     # Verify that the execution command exists
     if args.exec_cmd and not shutil.which(args.exec_cmd[0]):
