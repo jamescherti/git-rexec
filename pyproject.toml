@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "git-rexec"
-version = "1.0.2"
+version = "1.0.3"
 description = "Locate Git repositories and execute commands against them in parallel."
 readme = "README.md"
 requires-python = ">=3.9"
