@@ -3,36 +3,36 @@
 The [git-rexec](https://github.com/jamescherti/git-rexec/) command-line tool recursively locates Git repositories within a directory and executes commands against them, either sequentially or in parallel.
 
 Here are examples demonstrating how to use `git-rexec`:
-- Execute `git status -s` across all discovered Git repositories (found by searching recursively under the current working directory) in parallel (`-p` or `--parallel`):
-  ```
-  git-rexec -p -- git status -s
-  ```
 
-- Fetch updates across all discovered repositories, limiting the concurrency to 5 background jobs (`-j 5`), which helps avoid network congestion or server rate limits when communicating with upstream Git remotes:
-  ```bash
-  git-rexec -j 5 --parallel -- git fetch
-  ```
+Example 1: Execute `git status -s` across all discovered Git repositories (found by searching recursively under the current working directory) in parallel (`-p` or `--parallel`):
+```
+git-rexec -p -- git status -s
+```
 
+Example 2: Fetch updates across all discovered repositories, limiting the concurrency to 5 background jobs (`-j 5`), which helps avoid network congestion or server rate limits when communicating with upstream Git remotes:
+```bash
+git-rexec -j 5 --parallel -- git fetch
+```
 
-- Include sub-repositories (e.g., Git worktrees and submodules) alongside standard Git repositories during discovery (`-s` or `--include-sub-repos`), and execute `git status` against them:
-  ```bash
-  git-rexec -s -p -- git status
-  ```
+Example 3: Include sub-repositories (e.g., Git worktrees and submodules) alongside standard Git repositories during discovery (`-s` or `--include-sub-repos`), and execute `git status` against them:
+```bash
+git-rexec -s -p -- git status
+```
 
-- Target a specific base directory (`~/projects`) using the `-C` flag to recursively discover repositories within it, while explicitly excluding a specific subfolder (`~/projects/archive`). This example executes `git status -s` in parallel for all discovered repositories except those within the excluded path:
-  ```bash
-  git-rexec -C ~/projects --exclude-dir ~/projects/archive --parallel -- git status -s
-  ```
+Example 4: Target a specific base directory (`~/projects`) using the `-C` flag to recursively discover repositories within it, while explicitly excluding a specific subfolder (`~/projects/archive`). This example executes `git status -s` in parallel for all discovered repositories except those within the excluded path:
+```bash
+git-rexec -C ~/projects --exclude-dir ~/projects/archive --parallel -- git status -s
+```
 
-- Evaluate whether a `README.md` file exists in the repository (`sh -c "test -f README.md"`). If the condition returns an exit status of 0 (success), it counts the number of lines in that file (`wc -l README.md`):
-  ```bash
-  git-rexec --if-exec 'sh -c "test -f README.md"' --parallel -- wc -l README.md
-  ```
+Example 5: Evaluate whether a `README.md` file exists in the repository (`sh -c "test -f README.md"`). If the condition returns an exit status of 0 (success), it counts the number of lines in that file (`wc -l README.md`):
+```bash
+git-rexec --if-exec 'sh -c "test -f README.md"' --parallel -- wc -l README.md
+```
 
-- Print the paths of all discovered Git repositories:
-  ```bash
-  git-rexec --print
-  ```
+Example 6: Print the paths of all discovered Git repositories:
+```bash
+git-rexec --print
+```
 
 If this helps your workflow, please support the project by **⭐ starring git-rexec on GitHub** and sharing it on your website, blog, Mastodon, Reddit, X, LinkedIn, or other social media platforms to help more Git users discover its benefits.
 
