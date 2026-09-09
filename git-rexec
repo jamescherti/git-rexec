@@ -378,7 +378,7 @@ def discover_repos(directory: Path,
     return {
         repo
         for repo in repos
-        if not any(repo.resolve().is_relative_to(ex_path)
+        if not any(repo.is_relative_to(ex_path)
                    for ex_path in list_ex_paths)
     }
 
