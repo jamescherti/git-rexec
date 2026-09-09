@@ -53,6 +53,8 @@ except ImportError:
     HAS_COLORAMA = False
 
     class Fore:  # type: ignore
+        """Provide fallback empty strings for missing colorama Fore attributes."""
+
         YELLOW: str = ""
         RED: str = ""
         RESET: str = ""
@@ -606,7 +608,7 @@ def main() -> None:
         if args.exec_cmd and not args.parallel:
             if not args.quiet:
                 print(f"{Fore.YELLOW}[EXEC] {repo_path}: "
-                      f"{subprocess.list2cmdline(args.exec_cmd)}"
+                      f"{shlex.join(args.exec_cmd)}"
                       f"{Fore.RESET}")
 
             # Run interactively/sequentially (capture=False allows interaction)
