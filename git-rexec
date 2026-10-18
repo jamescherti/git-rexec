@@ -44,6 +44,9 @@ from dataclasses import dataclass
 from multiprocessing import cpu_count
 from pathlib import Path
 
+EXIT_COMMAND_NOT_FOUND: int = 127
+EXIT_CANNOT_EXECUTE: int = 126
+
 try:
     from colorama import Fore
     from colorama import init as colorama_init
@@ -58,6 +61,14 @@ except ImportError:
         YELLOW: str = ""
         RED: str = ""
         RESET: str = ""
+
+
+try:
+    from setproctitle import setproctitle
+
+    HAS_SETPROCTITLE: bool = True
+except ImportError:
+    HAS_SETPROCTITLE = False
 
 
 @dataclass
@@ -103,7 +114,7 @@ def git_toplevel(repo_path: Path) -> Path | None:
             check=True,
         )
         return Path(proc.stdout.strip()).resolve()
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, OSError):
         return None
 
 
@@ -154,6 +165,15 @@ def git_find_repo(
                         break
 
                     try:
+                        if entry.name == ".git":
+                            is_repo = True
+                            if entry.is_dir():
+                                repos.add(Path(current_dir))
+                            else:
+                                sub_repos.add(Path(current_dir))
+                            # Found the repository, stop evaluating this directory
+                            break
+
                         # Using follow_symlinks=False avoids an extra
                         # is_symlink() call
                         if entry.is_dir(follow_symlinks=False):
@@ -200,7 +220,12 @@ def get_sub_repos(repo_path: Path) -> set[Path]:
 
             # Git porcelain separates blocks with a blank line
             if not line:
-                if current_wt and not is_bare and current_wt != repo_path_resolved:
+                if (
+                    current_wt
+                    and not is_bare
+                    and current_wt != repo_path_resolved
+                    and current_wt.is_dir()
+                ):
                     sub_repos.add(current_wt)
                 # Reset state for the next block
                 current_wt = None
@@ -213,10 +238,15 @@ def get_sub_repos(repo_path: Path) -> set[Path]:
                 is_bare = True
 
         # Process the final block in case the output lacks a trailing newline
-        if current_wt and not is_bare and current_wt != repo_path_resolved:
+        if (
+            current_wt
+            and not is_bare
+            and current_wt != repo_path_resolved
+            and current_wt.is_dir()
+        ):
             sub_repos.add(current_wt)
 
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, OSError):
         pass
 
     # Discover submodules
@@ -238,9 +268,10 @@ def get_sub_repos(repo_path: Path) -> set[Path]:
 
         for line in sm_proc.stdout.splitlines():
             sm_path: Path = Path(line.strip()).resolve()
-            sub_repos.add(sm_path)
+            if sm_path.is_dir():
+                sub_repos.add(sm_path)
 
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, OSError):
         pass
 
     return sub_repos
@@ -276,8 +307,14 @@ def run_command_get_output(
     except FileNotFoundError:
         return CommandResult(
             command=cmd_list,
-            returncode=127,
+            returncode=EXIT_COMMAND_NOT_FOUND,
             stderr=f"Error: Command not found: '{cmd_list[0]}'\n",
+        )
+    except OSError as err:
+        return CommandResult(
+            command=cmd_list,
+            returncode=EXIT_CANNOT_EXECUTE,
+            stderr=f"Error: Cannot execute '{cmd_list[0]}': {err}\n",
         )
 
 
@@ -369,7 +406,7 @@ def discover_repos(
 
     # Extract and append sub-repositories concurrently if requested
     if include_sub_repos:
-        sub_repos: set[Path] = set()
+        sub_repos: set[Path] = set(worktrees)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures: list[Future[set[Path]]] = [
                 executor.submit(get_sub_repos, repo) for repo in repos | worktrees
@@ -514,6 +551,9 @@ def parse_args() -> argparse.Namespace:
 
     args: argparse.Namespace = parser.parse_args()
 
+    if args.max_workers < 1:
+        parser.error("--jobs must be at least 1")
+
     return args
 
 
@@ -534,7 +574,7 @@ def print_error_summary(errors: list[tuple[Path, CommandResult]]) -> int:
         cmd_display: str = " ".join(result.command)
         if result.returncode != 0:
             final_errno = 1
-            if result.returncode == 127:
+            if result.returncode == EXIT_COMMAND_NOT_FOUND:
                 msg: str = "Command not found"
             else:
                 msg = f"errno {result.returncode}"
@@ -546,15 +586,8 @@ def print_error_summary(errors: list[tuple[Path, CommandResult]]) -> int:
 
 def main() -> None:
     """Execute the main command-line interface."""
-    # Optional: setproctitle
-    try:
-        # pylint: disable=import-outside-toplevel
-        from setproctitle import setproctitle
-
+    if HAS_SETPROCTITLE:
         setproctitle(Path(sys.argv[0]).name)  # type: ignore
-    except ImportError:
-        # Optional dependency 'setproctitle' is not installed.
-        pass
 
     if HAS_COLORAMA:
         colorama_init()
@@ -569,10 +602,25 @@ def main() -> None:
         print("Nothing to do.", file=sys.stderr)
         sys.exit(2)
 
+    if not args.directory.is_dir():
+        print(
+            f"Error: Directory not found: '{args.directory}'",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     # Verify that the execution command exists
     if args.exec_cmd and not shutil.which(args.exec_cmd[0]):
         print(f"Error: Command not found: '{args.exec_cmd[0]}'", file=sys.stderr)
-        sys.exit(127)
+        sys.exit(EXIT_COMMAND_NOT_FOUND)
+
+    if_exec_cmd: list[str] | None = None
+    if args.if_exec:
+        try:
+            if_exec_cmd = shlex.split(args.if_exec)
+        except ValueError as err:
+            print(f"Error parsing --if-exec: {err}", file=sys.stderr)
+            sys.exit(2)
 
     # Discover Repositories
     repos: set[Path] = discover_repos(
@@ -586,10 +634,6 @@ def main() -> None:
     exec_parallel_cmd: list[str] | None = None
     if args.parallel and args.exec_cmd:
         exec_parallel_cmd = args.exec_cmd
-
-    if_exec_cmd: list[str] | None = None
-    if args.if_exec:
-        if_exec_cmd = shlex.split(args.if_exec)
 
     # Parallel Processing (Filter + Background Exec)
     processed_repos: list[RepoContext] = execute_parallel_tasks(
@@ -637,8 +681,13 @@ def main() -> None:
                 )
                 execution_errors.append((repo_path, failed_res))
             except FileNotFoundError:
-                failed_res: CommandResult = CommandResult(
-                    command=args.exec_cmd, returncode=127
+                failed_res = CommandResult(
+                    command=args.exec_cmd, returncode=EXIT_COMMAND_NOT_FOUND
+                )
+                execution_errors.append((repo_path, failed_res))
+            except OSError:
+                failed_res = CommandResult(
+                    command=args.exec_cmd, returncode=EXIT_CANNOT_EXECUTE
                 )
                 execution_errors.append((repo_path, failed_res))
 
