@@ -28,7 +28,7 @@ set -u
 set -x
 
 rm -f .coverage coverage.json
-# ruff check git_rexec/*.py tests/*.py
-# mypy git_rexec/*.py tests/*.py
+ruff check git_rexec/*.py tests/*.py
+mypy git_rexec/*.py tests/*.py
 python -m pytest -p no:libtmux -v --cov=. --cov-report=term-missing \
   --cov-report=json tests/*

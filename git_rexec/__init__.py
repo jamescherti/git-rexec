@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 #
 # Optional dependencies:
 #   - colorama
@@ -479,7 +479,7 @@ def parse_args() -> argparse.Namespace:
         "-C",
         "--directory",
         type=Path,
-        default=Path("."),
+        default=Path(),
         help="Root directory to search (defaults to current directory)",
     )
     parser.add_argument(
