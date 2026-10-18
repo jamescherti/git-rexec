@@ -1,4 +1,5 @@
 # git-rexec: Find Git Repositories and Execute Commands Against Them, either Sequentially or in Parallel
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 The [git-rexec](https://github.com/jamescherti/git-rexec/) command-line tool recursively locates Git repositories within a directory and executes commands against them, either sequentially or in parallel.
 

@@ -696,5 +696,5 @@ def test_dunder_main_signals(
         MagicMock(side_effect=exc),
     )
     with pytest.raises(SystemExit) as exc_info:
-        runpy.run_module("git_rexec", run_name="__main__")
+        runpy.run_module("git_rexec.__init__", run_name="__main__")
     assert exc_info.value.code == expected_code
