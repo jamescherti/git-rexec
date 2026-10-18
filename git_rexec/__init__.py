@@ -709,10 +709,8 @@ def main() -> None:
     try:
         _run()
     except KeyboardInterrupt:
-        print("\nInterrupting...", file=sys.stderr)
         sys.exit(130)
     except BrokenPipeError:
-        print("\nInterrupting...", file=sys.stderr)
         sys.exit(141)
 
 
