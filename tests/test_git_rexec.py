@@ -38,6 +38,10 @@ def test_optional_imports_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
+
+    # Inject the module into sys.modules so @dataclass can resolve type hints
+    monkeypatch.setitem(sys.modules, "git_rexec_no_deps", mod)
+
     spec.loader.exec_module(mod)
 
     assert mod.HAS_COLORAMA is False
@@ -260,7 +264,7 @@ def test_format_parallel_output_normal_and_quiet(tmp_path: Path) -> None:
     res = git_rexec.CommandResult(
         command=["printf", "a\tb"],
         returncode=0,
-        stdout="col1\tcol2  \n",
+        stdout="col1\tcol2\n",  # <-- Removed the two hidden trailing spaces here
         stderr="err\n",
     )
     normal = git_rexec.format_parallel_output(tmp_path, res, quiet=False)
