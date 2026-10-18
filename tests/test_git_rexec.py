@@ -1,5 +1,27 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
+#
+# Author: James Cherti
+# URL: https://github.com/jamescherti/git-rexec
+# Version: 1.0.4
+#
+# Copyright (C) 2019-2026 James Cherti
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation, either version 3 of the License, or (at your option) any later
+# version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+# FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
+# details.
+#
+# You should have received a copy of the GNU General Public License along with
+# this program. If not, see <https://www.gnu.org/licenses/>.
+#
 """Comprehensive pytest suite for git-rexec."""
+
+# ruff: noqa: PLR2004
 
 from __future__ import annotations
 
@@ -10,12 +32,12 @@ import runpy
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 import git_rexec
-
 
 # ---------------------------------------------------------------------------
 # Module-level Optional Dependency Fallbacks
@@ -26,7 +48,7 @@ def test_optional_imports_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test fallback behavior when colorama and setproctitle are missing."""
     orig_import = builtins.__import__
 
-    def fake_import(name: str, *args: object, **kwargs: object) -> object:
+    def fake_import(name: str, *args: Any, **kwargs: Any) -> Any:
         if name in ("colorama", "setproctitle"):
             raise ImportError(f"No module named {name}")
         return orig_import(name, *args, **kwargs)
@@ -264,7 +286,7 @@ def test_format_parallel_output_normal_and_quiet(tmp_path: Path) -> None:
     res = git_rexec.CommandResult(
         command=["printf", "a\tb"],
         returncode=0,
-        stdout="col1\tcol2\n",  # <-- Removed the two hidden trailing spaces here
+        stdout="col1\tcol2\n",
         stderr="err\n",
     )
     normal = git_rexec.format_parallel_output(tmp_path, res, quiet=False)
@@ -460,7 +482,7 @@ def test_print_error_summary(
 
 def _make_args(**overrides: object) -> argparse.Namespace:
     defaults = {
-        "directory": Path("."),
+        "directory": Path(),
         "exclude_dir": [],
         "parallel": False,
         "if_exec": None,
@@ -479,7 +501,7 @@ def test_main_nothing_to_do(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Exit with code 2 when no action flags or commands are given."""
-    monkeypatch.setattr(git_rexec, "parse_args", lambda: _make_args())
+    monkeypatch.setattr(git_rexec, "parse_args", _make_args)
     with pytest.raises(SystemExit) as exc_info:
         git_rexec.main()
     assert exc_info.value.code == 2
@@ -541,7 +563,7 @@ def test_main_invalid_if_exec_quotes(
     ("print_flag", "print0_flag", "expected_end"),
     [(True, False, "\n"), (False, True, "\0")],
 )
-def test_main_print_modes(
+def test_main_print_modes(  # noqa: PLR0913, PLR0917
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -667,12 +689,12 @@ def test_main_foreground_execution(
 def test_dunder_main_signals(
     monkeypatch: pytest.MonkeyPatch, exc: BaseException, expected_code: int
 ) -> None:
-    """Verify __main__ block catches KeyboardInterrupt (130) and BrokenPipeError (141)."""
+    """Verify __main__ catches KeyboardInterrupt and BrokenPipeError."""
     monkeypatch.setattr(
         git_rexec.argparse.ArgumentParser,
         "parse_args",
         MagicMock(side_effect=exc),
     )
     with pytest.raises(SystemExit) as exc_info:
-        runpy.run_path(str(git_rexec.__file__), run_name="__main__")
+        runpy.run_module("git_rexec", run_name="__main__")
     assert exc_info.value.code == expected_code
