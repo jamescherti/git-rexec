@@ -47,20 +47,34 @@ If this helps your workflow, please support the project by **⭐ starring git-re
 
 ## Installation
 
-### Method 1: Manual Installation (System-wide)
-
-Download the `git-rexec` script, make it executable, and copy it to a directory in your system PATH (e.g., `/usr/local/bin`):
-
-```bash
-sudo cp git-rexec /usr/local/bin/
-```
-
-### Method 2: Installation via pip
-
-Install the package directly from the Git repository using `pip`:
+Here is how to install `git-rexec` using [pip](https://pypi.org/project/pip/):
 
 ```bash
 pip install --user git-rexec
+```
+
+The pip command above will install the `pathaction` executable in the directory `~/.local/bin/`.
+
+## Optional Dependencies
+
+The `git-rexec` CLI offers optional dependencies that extend its functionality. These extras can be installed according to environment requirements.
+
+**Colored Terminal Output (`colors`)**: Installs `colorama` to provide consistent cross-platform ANSI color support. This enhances the readability of standard output and error messages.
+
+```bash
+pip install "git-rexec[colors]"
+```
+
+**Custom Process Title (`proctitle`)**: Installs `setproctitle` to rename the running process from `python` to `git-rexec`. This simplifies identification in system monitoring tools such as `top`, `htop`, and `ps`.
+
+```bash
+pip install "git-rexec[proctitle]"
+```
+
+To install both extras at once, use a comma-separated list:
+
+```bash
+pip install "git-rexec[colors,proctitle]"
 ```
 
 ## Dependencies

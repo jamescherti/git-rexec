@@ -15,6 +15,12 @@ authors = [
 keywords = ["git", "parallel", "executor", "automation"]
 classifiers = [
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Operating System :: OS Independent",
   "Environment :: Console",
   "Topic :: Software Development :: Version Control :: Git"
@@ -22,10 +28,15 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-extras = ["colorama", "setproctitle"]
+colors = ["colorama"]
+proctitle = ["setproctitle"]
 
 [project.urls]
 Homepage = "https://github.com/jamescherti/git-rexec"
+Repository = "https://github.com/jamescherti/git-rexec"
 
-[tool.setuptools]
-script-files = ["git-rexec"]
+[project.scripts]
+pathaction = "git_rexec:main"
+
+[tool.setuptools.packages.find]
+include = ["pathaction*"]

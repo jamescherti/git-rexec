@@ -5,42 +5,16 @@ from __future__ import annotations
 
 import argparse
 import builtins
-import importlib.machinery
 import importlib.util
 import runpy
 import subprocess
 import sys
 from pathlib import Path
-from types import ModuleType
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-
-def _load_module() -> ModuleType:
-    """Load git_rexec whether the file is named git_rexec.py or git-rexec."""
-    try:
-        import git_rexec  # type: ignore
-
-        return git_rexec
-    except ImportError:
-        base_dir = Path(__file__).resolve().parent
-        for candidate in ("git_rexec.py", "git-rexec"):
-            path = base_dir / candidate
-            if path.is_file():
-                loader = importlib.machinery.SourceFileLoader("git_rexec", str(path))
-                spec = importlib.util.spec_from_loader("git_rexec", loader)
-                assert spec is not None
-                module = importlib.util.module_from_spec(spec)
-                sys.modules["git_rexec"] = module
-                loader.exec_module(module)
-                return module
-        raise RuntimeError(
-            "Could not find 'git_rexec.py' or 'git-rexec' in the test directory."
-        )
-
-
-git_rexec = _load_module()
+import git_rexec
 
 
 # ---------------------------------------------------------------------------
