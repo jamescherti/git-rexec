@@ -51,6 +51,12 @@ dependencies = []
 [project.optional-dependencies]
 colors = ["colorama"]
 proctitle = ["setproctitle"]
+test = [
+  "pytest",
+  "pytest-cov",
+  "ruff",
+  "mypy",
+]
 
 [project.urls]
 Homepage = "https://github.com/jamescherti/git-rexec"
