@@ -63,7 +63,7 @@ Homepage = "https://github.com/jamescherti/git-rexec"
 Repository = "https://github.com/jamescherti/git-rexec"
 
 [project.scripts]
-pathaction = "git_rexec:main"
+git-rexec = "git_rexec:main"
 
 [tool.setuptools.packages.find]
-include = ["pathaction*"]
+include = ["git_rexec*"]
