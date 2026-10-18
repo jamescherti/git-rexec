@@ -136,13 +136,15 @@ def git_find_repo(
     dirs_to_visit: list[str] = [str(root_res)]
 
     # Convert exclusions to a string set for O(1) lookups
-    ex_resolved: set[str] = set()
-    if exclude_paths:
-        ex_resolved = {str(p.resolve()) for p in exclude_paths}
+    resolved_exclude_paths: list[Path] = (
+        [p.resolve() for p in exclude_paths] if exclude_paths else []
+    )
+    ex_resolved: set[str] = {str(p) for p in resolved_exclude_paths}
 
     # Do not begin traversal if the root itself is excluded
-    if exclude_paths and any(
-        root_res == p or root_res.is_relative_to(p) for p in exclude_paths
+    if resolved_exclude_paths and any(
+        root_res == p or root_res.is_relative_to(p)
+        for p in resolved_exclude_paths
     ):
         return repos, sub_repos
 
@@ -155,15 +157,6 @@ def git_find_repo(
                 is_repo: bool = False
 
                 for entry in iter_scandir:
-                    if entry.name == ".git":
-                        is_repo = True
-                        if entry.is_dir():
-                            repos.add(Path(current_dir))
-                        else:
-                            sub_repos.add(Path(current_dir))
-                        # Found the repository, stop evaluating this directory
-                        break
-
                     try:
                         if entry.name == ".git":
                             is_repo = True
@@ -461,6 +454,7 @@ def execute_parallel_tasks(
                     f"Error processing repository {repo_path}: {exc}", file=sys.stderr
                 )
 
+    results.sort(key=lambda ctx: ctx.path)
     return results
 
 
@@ -584,7 +578,7 @@ def print_error_summary(errors: list[tuple[Path, CommandResult]]) -> int:
     return final_errno
 
 
-def main() -> None:
+def _run() -> None:
     """Execute the main command-line interface."""
     if HAS_SETPROCTITLE:
         setproctitle(Path(sys.argv[0]).name)  # type: ignore
@@ -615,12 +609,20 @@ def main() -> None:
         sys.exit(EXIT_COMMAND_NOT_FOUND)
 
     if_exec_cmd: list[str] | None = None
-    if args.if_exec:
+    if args.if_exec is not None:
         try:
             if_exec_cmd = shlex.split(args.if_exec)
         except ValueError as err:
             print(f"Error parsing --if-exec: {err}", file=sys.stderr)
             sys.exit(2)
+        if not if_exec_cmd:
+            print("Error: --if-exec command cannot be empty", file=sys.stderr)
+            sys.exit(2)
+        if not shutil.which(if_exec_cmd[0]):
+            print(
+                f"Error: Command not found: '{if_exec_cmd[0]}'", file=sys.stderr
+            )
+            sys.exit(EXIT_COMMAND_NOT_FOUND)
 
     # Discover Repositories
     repos: set[Path] = discover_repos(
@@ -702,12 +704,17 @@ def main() -> None:
     sys.exit(print_error_summary(execution_errors))
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Entry point with signal and pipe exception handling."""
     try:
-        main()
+        _run()
     except KeyboardInterrupt:
         print("\nInterrupting...", file=sys.stderr)
         sys.exit(130)
     except BrokenPipeError:
         print("\nInterrupting...", file=sys.stderr)
         sys.exit(141)
+
+
+if __name__ == "__main__":
+    main()
