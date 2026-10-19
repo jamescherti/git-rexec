@@ -43,6 +43,7 @@ import git_rexec
 # Module-level Optional Dependency Fallbacks
 # ---------------------------------------------------------------------------
 
+
 def test_optional_imports_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test fallback behavior when colorama and setproctitle are missing."""
     orig_import = builtins.__import__

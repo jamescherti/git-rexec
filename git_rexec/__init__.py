@@ -143,8 +143,7 @@ def git_find_repo(
 
     # Do not begin traversal if the root itself is excluded
     if resolved_exclude_paths and any(
-        root_res == p or root_res.is_relative_to(p)
-        for p in resolved_exclude_paths
+        root_res == p or root_res.is_relative_to(p) for p in resolved_exclude_paths
     ):
         return repos, sub_repos
 
@@ -619,9 +618,7 @@ def _run() -> None:
             print("Error: --if-exec command cannot be empty", file=sys.stderr)
             sys.exit(2)
         if not shutil.which(if_exec_cmd[0]):
-            print(
-                f"Error: Command not found: '{if_exec_cmd[0]}'", file=sys.stderr
-            )
+            print(f"Error: Command not found: '{if_exec_cmd[0]}'", file=sys.stderr)
             sys.exit(EXIT_COMMAND_NOT_FOUND)
 
     # Discover Repositories
