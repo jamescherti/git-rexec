@@ -497,10 +497,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "-j",
         "--jobs",
-        type=int,
+        # If someone passes -j <= 0, max_workers will be set to 1
+        type=lambda x: max(1, int(x)),
         dest="max_workers",
         help="Maximum number of processors/workers to use",
-        default=(cpu_count() or 1),
+        default=max(1, cpu_count() or 1),
     )
     parser.add_argument(
         "-q",
