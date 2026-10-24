@@ -99,19 +99,22 @@ class RepoContext:
     parallel_result: CommandResult | None = None
 
 
-def is_excluded(target: Path, exclude_paths: set[Path] | list[Path] | None) -> bool:
-    """Check if a target path is within the excluded paths.
+def is_excluded(
+    resolved_target: Path,
+    resolved_exclude_paths: set[Path] | list[Path] | None,
+) -> bool:
+    """Check if a resolved target path is within the resolved excluded paths.
 
-    :param target: The path to check.
-    :param exclude_paths: A collection of resolved paths to exclude.
+    :param resolved_target: The resolved path to check.
+    :param resolved_exclude_paths: A collection of resolved paths to exclude.
     :return: True if the target is excluded, False otherwise.
     """
-    if not exclude_paths:
+    if not resolved_exclude_paths:
         return False
 
-    target_res: Path = target.resolve()
     return any(
-        target_res == ex or target_res.is_relative_to(ex) for ex in exclude_paths
+        resolved_target == ex or resolved_target.is_relative_to(ex)
+        for ex in resolved_exclude_paths
     )
 
 
@@ -148,15 +151,17 @@ def git_find_repo(
     git_worktrees: set[Path] = set()
 
     # Resolve excluded paths once
-    resolved_excludes: set[Path] = set()
-    if exclude_paths:
-        resolved_excludes = {ex_path.resolve() for ex_path in exclude_paths}
+    resolved_excludes: set[Path] = (
+        {ex_path.resolve() for ex_path in exclude_paths} if exclude_paths else set()
+    )
+
+    resolved_root: Path = root.resolve()
 
     # Do not begin traversal if the root itself is excluded
-    if is_excluded(root, resolved_excludes):
+    if is_excluded(resolved_root, resolved_excludes):
         return git_repos, git_worktrees
 
-    dirs_to_visit: list[Path] = [root.resolve()]
+    dirs_to_visit: list[Path] = [resolved_root]
     while dirs_to_visit:
         current_dir: Path = dirs_to_visit.pop()
 
@@ -174,7 +179,7 @@ def git_find_repo(
                                 is_repo = True
                                 git_repos.add(current_dir)
                                 break
-                            elif entry.is_file(follow_symlinks=False):
+                            if entry.is_file(follow_symlinks=False):
                                 # Found the worktree, stop evaluating this directory
                                 is_repo = True
                                 git_worktrees.add(current_dir)
@@ -190,7 +195,7 @@ def git_find_repo(
                     except OSError:
                         continue
 
-                if not is_repo:
+                if not is_repo and dirs_in_current:
                     # Append collected directories only if we are not inside a
                     # repository
                     dirs_to_visit.extend(dirs_in_current)
@@ -235,7 +240,7 @@ def get_sub_repos(
                 ):
                     sub_repos.add(current_worktree)
             elif line == "bare" and current_worktree:
-                sub_repos.remove(current_worktree)
+                sub_repos.discard(current_worktree)
 
         return sub_repos
 
@@ -285,15 +290,16 @@ def run_command_get_output(
         proc: subprocess.CompletedProcess[str] = subprocess.run(
             cmd_list,
             cwd=repo_path,
-            capture_output=capture,
+            stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
+            stderr=subprocess.PIPE if capture else subprocess.DEVNULL,
             text=True,
             check=False,
         )
         return CommandResult(
             command=cmd_list,
             returncode=proc.returncode,
-            stdout=proc.stdout if proc.stdout else "",
-            stderr=proc.stderr if proc.stderr else "",
+            stdout=proc.stdout or "",
+            stderr=proc.stderr or "",
         )
     except FileNotFoundError:
         return CommandResult(
@@ -330,12 +336,9 @@ def format_parallel_output(
     if quiet:
         return formatted
 
-    header: str = f"{Fore.YELLOW}[EXEC-P] {repo_path}"
     cmd_str: str = " ".join(result.command)
-    header += f": {cmd_str}{Fore.RESET}\n"
-
-    indent: str = " " * 4
-    indented_body: str = textwrap.indent(formatted, prefix=indent)
+    header: str = f"{Fore.YELLOW}[EXEC-P] {repo_path}: {cmd_str}{Fore.RESET}\n"
+    indented_body: str = textwrap.indent(formatted, prefix="    ")
     return header + indented_body
 
 
@@ -350,21 +353,19 @@ def process_repo(
     :return: RepoContext if processed successfully, None if filtered out.
     """
     # Filter: if-exec
-    if_exec_cmd_list: list[str] | None = if_exec_cmd
-    if if_exec_cmd_list:
+    if if_exec_cmd:
         # We discard output for the filter check, only caring about exit code
         filter_res: CommandResult = run_command_get_output(
-            repo_path, if_exec_cmd_list, capture=True
+            repo_path, if_exec_cmd, capture=False
         )
         if filter_res.returncode != 0:
             return None
 
     # Action: exec-parallel
     parallel_result: CommandResult | None = None
-    exec_parallel_cmd_list: list[str] | None = exec_parallel_cmd
-    if exec_parallel_cmd_list:
+    if exec_parallel_cmd:
         parallel_result = run_command_get_output(
-            repo_path, exec_parallel_cmd_list, capture=True
+            repo_path, exec_parallel_cmd, capture=True
         )
 
     return RepoContext(path=repo_path, parallel_result=parallel_result)
@@ -381,8 +382,8 @@ def discover_repos(
     :param include_sub_repos: Whether to include sub-repositories.
     :return: A set of repository root paths.
     """
-    list_ex_paths: list[Path] = (
-        [Path(ex_dir).resolve() for ex_dir in exclude_dirs] if exclude_dirs else []
+    set_ex_paths: set[Path] = (
+        {Path(ex_dir).resolve() for ex_dir in exclude_dirs} if exclude_dirs else set()
     )
 
     # Discover all repositories
@@ -393,28 +394,26 @@ def discover_repos(
     if toplevel:
         git_repos = {toplevel}
     else:
-        git_repos, git_worktrees = git_find_repo(directory, list_ex_paths)
+        git_repos, git_worktrees = git_find_repo(directory, set_ex_paths)
 
     # Extract and append sub-repositories concurrently if requested
     if include_sub_repos:
-        sub_repos: set[Path] = set()
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # We must search for worktrees/submodules in BOTH repos and worktrees
-            futures: list[Future[set[Path]]] = [
-                executor.submit(get_sub_repos, repo, list_ex_paths)
-                for repo in git_repos | git_worktrees
-            ]
-            for future in as_completed(futures):
-                result: set[Path] = future.result()
-                sub_repos.update(result)
-
-        git_repos.update(sub_repos)
+        candidates: set[Path] = git_repos | git_worktrees
+        if candidates:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # We must search for worktrees/submodules in BOTH repos and worktrees
+                futures: list[Future[set[Path]]] = [
+                    executor.submit(get_sub_repos, repo, set_ex_paths)
+                    for repo in candidates
+                ]
+                for future in as_completed(futures):
+                    git_repos.update(future.result())
 
     # Filter out excluded directories (applies dynamically to sub-repos too)
-    if not list_ex_paths:
+    if not set_ex_paths:
         return git_repos
 
-    return {repo for repo in git_repos if not is_excluded(repo, list_ex_paths)}
+    return {repo for repo in git_repos if not is_excluded(repo, set_ex_paths)}
 
 
 def execute_parallel_tasks(
@@ -431,6 +430,9 @@ def execute_parallel_tasks(
     :param max_workers: Maximum number of threads for execution.
     :return: list of processed repository contexts.
     """
+    if not repos:
+        return []
+
     results: list[RepoContext] = []
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -627,16 +629,26 @@ def _run() -> None:
     )
 
     # setup background command list if needed
-    exec_parallel_cmd: list[str] | None = None
-    if args.parallel and args.exec_cmd:
-        exec_parallel_cmd = args.exec_cmd
-
-    # Parallel Processing (Filter + Background Exec)
-    processed_repos: list[RepoContext] = execute_parallel_tasks(
-        repos, exec_parallel_cmd, if_exec_cmd, args.max_workers
+    exec_parallel_cmd: list[str] | None = (
+        args.exec_cmd if (args.parallel and args.exec_cmd) else None
     )
 
+    # Parallel Processing (Filter + Background Exec)
+    if not exec_parallel_cmd and not if_exec_cmd:
+        processed_repos: list[RepoContext] = [
+            RepoContext(path=repo) for repo in sorted(repos)
+        ]
+    else:
+        processed_repos = execute_parallel_tasks(
+            repos, exec_parallel_cmd, if_exec_cmd, args.max_workers
+        )
+
     execution_errors: list[tuple[Path, CommandResult]] = []
+    fg_cmd_str: str = (
+        subprocess.list2cmdline(args.exec_cmd)
+        if (args.exec_cmd and not args.parallel and not args.quiet)
+        else ""
+    )
 
     # Main Loop: Display results and run sequential commands
     for context in processed_repos:
@@ -656,11 +668,7 @@ def _run() -> None:
         # Handle Foreground Execution
         if args.exec_cmd and not args.parallel:
             if not args.quiet:
-                print(
-                    f"{Fore.YELLOW}[EXEC] {repo_path}: "
-                    f"{subprocess.list2cmdline(args.exec_cmd)}"
-                    f"{Fore.RESET}"
-                )
+                print(f"{Fore.YELLOW}[EXEC] {repo_path}: {fg_cmd_str}{Fore.RESET}")
 
             # Run interactively/sequentially (capture=False allows interaction)
             # However, for consistency with error tracking, we might want to
