@@ -99,6 +99,22 @@ class RepoContext:
     parallel_result: CommandResult | None = None
 
 
+def is_excluded(target: Path, exclude_paths: set[Path] | list[Path] | None) -> bool:
+    """Check if a target path is within the excluded paths.
+
+    :param target: The path to check.
+    :param exclude_paths: A collection of resolved paths to exclude.
+    :return: True if the target is excluded, False otherwise.
+    """
+    if not exclude_paths:
+        return False
+
+    target_res: Path = target.resolve()
+    return any(
+        target_res == ex or target_res.is_relative_to(ex) for ex in exclude_paths
+    )
+
+
 def git_toplevel(repo_path: Path) -> Path | None:
     """Return the absolute path to the top-level directory of a Git repository.
 
@@ -131,21 +147,16 @@ def git_find_repo(
     git_repos: set[Path] = set()
     git_worktrees: set[Path] = set()
 
-    # Resolve excluded paths
+    # Resolve excluded paths once
+    resolved_excludes: set[Path] = set()
     if exclude_paths:
-        exclude_paths = {ex_path.resolve() for ex_path in exclude_paths}
-    elif not exclude_paths:
-        exclude_paths = set()
+        resolved_excludes = {ex_path.resolve() for ex_path in exclude_paths}
 
     # Do not begin traversal if the root itself is excluded
-    root_res: Path = root.resolve()
-    if exclude_paths and any(
-        root_res == ex_path or root_res.is_relative_to(ex_path)
-        for ex_path in exclude_paths
-    ):
+    if is_excluded(root, resolved_excludes):
         return git_repos, git_worktrees
 
-    dirs_to_visit: list[Path] = [root_res]
+    dirs_to_visit: list[Path] = [root.resolve()]
     while dirs_to_visit:
         current_dir: Path = dirs_to_visit.pop()
 
@@ -171,7 +182,7 @@ def git_find_repo(
                         # Add the directory to dirs_in_current to scan it recursively
                         elif entry.is_dir(follow_symlinks=False):
                             entry_path: Path = Path(entry.path)
-                            if exclude_paths and entry_path in exclude_paths:
+                            if is_excluded(entry_path, resolved_excludes):
                                 # Excluded
                                 continue
 
@@ -205,13 +216,6 @@ def get_sub_repos(
     if exclude_paths:
         resolved_excludes = {ex_path.resolve() for ex_path in exclude_paths}
 
-    def _is_excluded(p: Path) -> bool:
-        if not resolved_excludes:
-            return False
-        return any(
-            p == ex_path or p.is_relative_to(ex_path) for ex_path in resolved_excludes
-        )
-
     # Discover worktrees
     try:
         worktree_proc: subprocess.CompletedProcess[str] = subprocess.run(
@@ -231,7 +235,7 @@ def get_sub_repos(
                 if (
                     current_worktree != repo_path_resolved
                     and current_worktree.is_dir()
-                    and not _is_excluded(current_worktree)
+                    and not is_excluded(current_worktree, resolved_excludes)
                 ):
                     sub_repos.add(current_worktree)
             elif line == "bare" and current_worktree in sub_repos:
@@ -263,7 +267,7 @@ def get_sub_repos(
                 if (
                     sm_path != repo_path_resolved
                     and sm_path.is_dir()
-                    and not _is_excluded(sm_path)
+                    and not is_excluded(sm_path, resolved_excludes)
                 ):
                     sub_repos.add(sm_path)
 
@@ -420,11 +424,7 @@ def discover_repos(
     if not list_ex_paths:
         return git_repos
 
-    return {
-        repo
-        for repo in git_repos
-        if not any(repo.resolve().is_relative_to(ex_path) for ex_path in list_ex_paths)
-    }
+    return {repo for repo in git_repos if not is_excluded(repo, list_ex_paths)}
 
 
 def execute_parallel_tasks(
