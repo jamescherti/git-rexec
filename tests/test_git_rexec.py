@@ -186,6 +186,9 @@ def test_get_sub_repos_worktrees_and_submodules(tmp_path: Path) -> None:
     for p in (main_repo, wt1, wt2, bare_wt, sm1):
         p.mkdir()
 
+    # Create .gitmodules so the submodule evaluation branch executes
+    (main_repo / ".gitmodules").touch()
+
     # Includes:
     # - main_repo (should be ignored because it matches repo_path)
     # - bare_wt (should be ignored because of 'bare')
