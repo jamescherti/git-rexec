@@ -400,6 +400,7 @@ def discover_repos(
     if include_sub_repos:
         candidates: set[Path] = git_repos | git_worktrees
         if candidates:
+            # TODO recursively get sub repos from sub repos
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 # We must search for worktrees/submodules in BOTH repos and worktrees
                 futures: list[Future[set[Path]]] = [

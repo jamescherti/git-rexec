@@ -28,7 +28,6 @@ from __future__ import annotations
 import argparse
 import builtins
 import importlib.util
-import runpy
 import subprocess
 import sys
 from pathlib import Path
@@ -92,7 +91,7 @@ def test_git_toplevel_success(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "exc",
     [
-        subprocess.CalledProcessError(128, "git"),
+        subprocess.CalledProcessError(128, ["git"]),
         FileNotFoundError("git not found"),
         PermissionError("access denied"),
     ],
@@ -471,9 +470,16 @@ def test_parse_args_valid(monkeypatch: pytest.MonkeyPatch) -> None:
     assert args.exec_cmd == ["git", "fetch"]
 
 
-def test_parse_args_invalid_jobs(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Exit with error when --jobs is less than 1."""
+def test_parse_args_jobs_zero_becomes_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure passing -j 0 sets max_workers to 1 due to lambda max(1, int(x))."""
     monkeypatch.setattr(sys, "argv", ["git-rexec", "-j", "0", "--print"])
+    args = git_rexec.parse_args()
+    assert args.max_workers == 1
+
+
+def test_parse_args_invalid_jobs_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exit with error when --jobs is not an integer string."""
+    monkeypatch.setattr(sys, "argv", ["git-rexec", "-j", "foo", "--print"])
     with pytest.raises(SystemExit) as exc_info:
         git_rexec.parse_args()
     assert exc_info.value.code == 2
@@ -748,11 +754,7 @@ def test_dunder_main_signals(
     monkeypatch: pytest.MonkeyPatch, exc: BaseException, expected_code: int
 ) -> None:
     """Verify __main__ catches KeyboardInterrupt and BrokenPipeError."""
-    monkeypatch.setattr(
-        git_rexec.argparse.ArgumentParser,
-        "parse_args",
-        MagicMock(side_effect=exc),
-    )
+    monkeypatch.setattr(git_rexec, "_run", MagicMock(side_effect=exc))
     with pytest.raises(SystemExit) as exc_info:
-        runpy.run_module("git_rexec.__init__", run_name="__main__")
+        git_rexec.main()
     assert exc_info.value.code == expected_code
