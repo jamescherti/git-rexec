@@ -174,56 +174,75 @@ def test_git_find_repo_oserror_entry_is_dir(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_get_sub_repos_worktrees_and_submodules(tmp_path: Path) -> None:
-    """Parse worktrees (including bare & trailing blocks) and submodules."""
-    main_repo = tmp_path / "main"
-    wt1 = tmp_path / "wt1"
-    wt2 = tmp_path / "wt2"
-    bare_wt = tmp_path / "bare_wt"
-    sm1 = tmp_path / "sm1"
-    missing_wt = tmp_path / "missing_wt"
+def test_get_sub_repos_worktrees(tmp_path: Path) -> None:
+    """Parse worktrees (including bare & trailing blocks) when .git is a file."""
+    worktree_repo = (tmp_path / "worktree_repo").resolve()
+    wt1 = (tmp_path / "wt1").resolve()
+    wt2 = (tmp_path / "wt2").resolve()
+    bare_wt = (tmp_path / "bare_wt").resolve()
+    missing_wt = (tmp_path / "missing_wt").resolve()
 
-    for p in (main_repo, wt1, wt2, bare_wt, sm1):
+    for p in (worktree_repo, wt1, wt2, bare_wt):
         p.mkdir()
 
-    # Create .gitmodules so the submodule evaluation branch executes
-    (main_repo / ".gitmodules").touch()
+    # Create .git file so the worktree evaluation branch executes
+    (worktree_repo / ".git").write_text("gitdir: /somewhere", encoding="utf-8")
 
     # Includes:
-    # - main_repo (should be ignored because it matches repo_path)
+    # - worktree_repo (should be ignored because it matches resolved_repo_path)
     # - bare_wt (should be ignored because of 'bare')
     # - missing_wt (should be ignored because directory does not exist)
     # - wt1 ( separated by blank line )
     # - wt2 ( final block without trailing blank line )
     porcelain_output = (
-        f"worktree {main_repo}\nHEAD abc\n\n"
+        f"worktree {worktree_repo}\nHEAD abc\n\n"
         f"worktree {bare_wt}\nbare\n\n"
         f"worktree {missing_wt}\nHEAD def\n\n"
         f"worktree {wt1}\nHEAD 123\n\n"
         f"worktree {wt2}\nHEAD 456"
     )
-    submodule_output = f"{sm1}\n{tmp_path / 'missing_sm'}\n"
 
-    def fake_run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        if "worktree" in cmd:
-            return subprocess.CompletedProcess(
-                cmd, 0, stdout=porcelain_output, stderr=""
-            )
-        if "submodule" in cmd:
-            return subprocess.CompletedProcess(
-                cmd, 0, stdout=submodule_output, stderr=""
-            )
-        raise AssertionError(f"Unexpected command: {cmd}")
-
-    with patch("subprocess.run", side_effect=fake_run):
-        result = git_rexec.get_sub_repos(main_repo)
-        assert result == {wt1.resolve(), wt2.resolve(), sm1.resolve()}
+    mock_proc = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout=porcelain_output, stderr=""
+    )
+    with patch("subprocess.run", return_value=mock_proc):
+        result = git_rexec.get_sub_repos(worktree_repo)
+        assert result == {wt1, wt2}
 
 
-def test_get_sub_repos_errors(tmp_path: Path) -> None:
-    """Return empty set when git worktree/submodule commands fail."""
-    with patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, "git")):
-        assert git_rexec.get_sub_repos(tmp_path) == set()
+def test_get_sub_repos_submodules(tmp_path: Path) -> None:
+    """Parse submodules when .gitmodules is a file."""
+    main_repo = (tmp_path / "main").resolve()
+    sm1 = (tmp_path / "sm1").resolve()
+    sm_excl = (tmp_path / "excluded" / "sm_excl").resolve()
+
+    for p in (main_repo, sm1, sm_excl):
+        p.mkdir(parents=True)
+
+    # Create .gitmodules so the submodule evaluation branch executes
+    (main_repo / ".gitmodules").touch()
+
+    submodule_output = (
+        f"{main_repo}\n"
+        f"{sm1}\n"
+        f"{sm_excl}\n"
+        f"{tmp_path / 'missing_sm'}\n"
+    )
+
+    mock_proc = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout=submodule_output, stderr=""
+    )
+    with patch("subprocess.run", return_value=mock_proc):
+        result = git_rexec.get_sub_repos(
+            main_repo,
+            resolved_exclude_paths=[(tmp_path / "excluded").resolve()],
+        )
+        assert result == {sm1}
+
+
+def test_get_sub_repos_none(tmp_path: Path) -> None:
+    """Return empty set when neither .git file nor .gitmodules file exists."""
+    assert git_rexec.get_sub_repos(tmp_path.resolve()) == set()
 
 
 # ---------------------------------------------------------------------------
@@ -375,7 +394,7 @@ def test_discover_repos_via_find_repo_no_excludes(tmp_path: Path) -> None:
     with (
         patch("git_rexec.git_toplevel", return_value=None),
         patch("git_rexec.git_find_repo", return_value=({r1}, {wt1})),
-        patch("git_rexec.get_sub_repos", return_value=set()),
+        patch("git_rexec.get_sub_repos", return_value={wt1}),
     ):
         repos = git_rexec.discover_repos(
             directory=tmp_path,
@@ -562,6 +581,41 @@ def test_main_invalid_if_exec_quotes(
     assert "Error parsing --if-exec" in capsys.readouterr().err
 
 
+def test_main_empty_if_exec(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Exit with code 2 when --if-exec is empty or whitespace only."""
+    monkeypatch.setattr(
+        git_rexec,
+        "parse_args",
+        lambda: _make_args(directory=tmp_path, print=True, if_exec="   "),
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        git_rexec.main()
+    assert exc_info.value.code == 2
+    assert "--if-exec command cannot be empty" in capsys.readouterr().err
+
+
+def test_main_if_exec_command_not_found(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Exit with 127 when --if-exec binary is not in PATH."""
+    monkeypatch.setattr(
+        git_rexec,
+        "parse_args",
+        lambda: _make_args(directory=tmp_path, print=True, if_exec="missing_filter"),
+    )
+    monkeypatch.setattr("shutil.which", lambda _cmd: None)
+    with pytest.raises(SystemExit) as exc_info:
+        git_rexec.main()
+    assert exc_info.value.code == 127
+    assert "Command not found: 'missing_filter'" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize(
     ("print_flag", "print0_flag", "expected_end"),
     [(True, False, "\n"), (False, True, "\0")],
@@ -579,6 +633,7 @@ def test_main_print_modes(  # noqa: PLR0913, PLR0917
     monkeypatch.setattr(git_rexec, "setproctitle", MagicMock(), raising=False)
     monkeypatch.setattr(git_rexec, "HAS_COLORAMA", True)
     monkeypatch.setattr(git_rexec, "colorama_init", MagicMock(), raising=False)
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/true")
 
     monkeypatch.setattr(
         git_rexec,
