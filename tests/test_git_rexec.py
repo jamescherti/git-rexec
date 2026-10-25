@@ -193,8 +193,8 @@ def test_get_sub_repos_worktrees(tmp_path: Path) -> None:
     # - worktree_repo (should be ignored because it matches resolved_repo_path)
     # - bare_wt (should be ignored because of 'bare')
     # - missing_wt (should be ignored because directory does not exist)
-    # - wt1 ( separated by blank line )
-    # - wt2 ( final block without trailing blank line )
+    # - wt1 ( separated by NUL bytes )
+    # - wt2 ( final block without trailing NUL byte )
     porcelain_output = (
         f"worktree {worktree_repo}\0HEAD abc\0\0"
         f"worktree {bare_wt}\0bare\0\0"
@@ -223,7 +223,7 @@ def test_get_sub_repos_submodules(tmp_path: Path) -> None:
     # Create .gitmodules so the submodule evaluation branch executes
     (main_repo / ".gitmodules").touch()
 
-    submodule_output = f"{main_repo}\n{sm1}\n{sm_excl}\n{tmp_path / 'missing_sm'}\n"
+    submodule_output = f"{main_repo}\0{sm1}\0{sm_excl}\0{tmp_path / 'missing_sm'}\0"
 
     mock_proc = subprocess.CompletedProcess(
         args=[], returncode=0, stdout=submodule_output, stderr=""

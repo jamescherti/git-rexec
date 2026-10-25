@@ -139,6 +139,7 @@ def git_toplevel(repo_path: Path) -> Path | None:
             # 2. Round-trip preservation: When the resulting path is passed back to
             # filesystem operations or subprocesses, Python can encode those surrogate
             # characters back into their original bytes.
+            encoding=sys.getfilesystemencoding(),
             errors="surrogateescape",
             check=True,
         )
@@ -238,6 +239,7 @@ def get_sub_repos(
         ["git", "-C", str(resolved_repo_path), "worktree", "list", "--porcelain", "-z"],
         capture_output=True,
         text=True,
+        encoding=sys.getfilesystemencoding(),
         errors="surrogateescape",
         check=True,
     )
@@ -267,15 +269,26 @@ def get_sub_repos(
                 "submodule",
                 "foreach",
                 "--quiet",
-                "pwd",
+                # Use the running Python interpreter for NUL-delimited paths.
+                shlex.join(
+                    [
+                        sys.executable,
+                        "-c",
+                        "import os, sys; sys.stdout.buffer.write("
+                        "os.getcwdb() + b'\\0')",
+                    ]
+                ),
             ],
             capture_output=True,
             text=True,
+            encoding=sys.getfilesystemencoding(),
             errors="surrogateescape",
             check=True,
         )
 
-        for line in sm_proc.stdout.splitlines():
+        for line in sm_proc.stdout.split("\0"):
+            if not line:
+                continue
             sm_path: Path = Path(line).resolve()
             if (
                 sm_path != resolved_repo_path
@@ -677,11 +690,13 @@ def _run() -> None:
         )
 
     execution_errors: list[tuple[Path, CommandResult]] = []
-    fg_cmd_str: str = (
-        shlex.join(args.exec_cmd)
-        if (args.exec_cmd and not args.parallel and not args.quiet)
-        else ""
-    )
+    fg_cmd_str: str = ""
+    if args.exec_cmd and not args.parallel and not args.quiet:
+        fg_cmd_str = (
+            subprocess.list2cmdline(args.exec_cmd)
+            if os.name == "nt"
+            else shlex.join(args.exec_cmd)
+        )
 
     # Main Loop: Display results and run sequential commands
     for context in processed_repos:
