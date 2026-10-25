@@ -130,9 +130,19 @@ def git_toplevel(repo_path: Path) -> Path | None:
             ["git", "-C", str(repo_path), "rev-parse", "--show-toplevel"],
             capture_output=True,
             text=True,
+            # This allows handling Git repository paths containing filenames
+            # that are not valid UTF-8. With text=True, subprocess.run() decodes Git's
+            # output into a string. By default, decoding errors can raise
+            # UnicodeDecodeError. Using errors="surrogateescape" provides:
+            # 1. Lossless decoding: Invalid UTF-8 bytes are represented using Unicode
+            # surrogate code points (U+DC80 through U+DCFF).
+            # 2. Round-trip preservation: When the resulting path is passed back to
+            # filesystem operations or subprocesses, Python can encode those surrogate
+            # characters back into their original bytes.
+            errors="surrogateescape",
             check=True,
         )
-        return Path(proc.stdout.strip()).resolve()
+        return Path(proc.stdout.removesuffix("\n")).resolve()
     except (subprocess.CalledProcessError, OSError):
         return None
 
@@ -174,6 +184,9 @@ def git_find_repo(
                 for entry in iter_scandir:
                     try:
                         if entry.name == ".git":
+                            # TODO Check toplevel?
+                            # if git_toplevel(current_dir) != current_dir:
+                            #     continue
                             if entry.is_dir(follow_symlinks=False):
                                 # Found the repository, stop evaluating this directory
                                 is_repo = True
@@ -258,11 +271,12 @@ def get_sub_repos(
             ],
             capture_output=True,
             text=True,
+            errors="surrogateescape",
             check=True,
         )
 
         for line in sm_proc.stdout.splitlines():
-            sm_path: Path = Path(line.strip()).resolve()
+            sm_path: Path = Path(line).resolve()
             if (
                 sm_path != resolved_repo_path
                 and sm_path.is_dir()
@@ -291,8 +305,9 @@ def run_command_get_output(
             cmd_list,
             cwd=repo_path,
             stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
-            stderr=subprocess.PIPE if capture else subprocess.DEVNULL,
+            stderr=subprocess.STDOUT if capture else subprocess.DEVNULL,
             text=True,
+            errors="surrogateescape",
             check=False,
         )
         return CommandResult(
@@ -329,12 +344,12 @@ def format_parallel_output(
     if not raw_output and result.returncode == 0:
         return ""
 
+    if quiet:
+        return raw_output
+
     formatted: str = raw_output.replace("\t", "    ").rstrip()
     if formatted:
         formatted += "\n"
-
-    if quiet:
-        return formatted
 
     cmd_str: str = " ".join(result.command)
     header: str = f"{Fore.YELLOW}[EXEC-P] {repo_path}: {cmd_str}{Fore.RESET}\n"
@@ -623,12 +638,16 @@ def _run() -> None:
             sys.exit(EXIT_COMMAND_NOT_FOUND)
 
     # Discover Repositories
-    repos: set[Path] = discover_repos(
-        args.directory.absolute(),
-        args.max_workers,
-        args.exclude_dir,
-        args.include_sub_repos,
-    )
+    try:
+        repos: set[Path] = discover_repos(
+            args.directory.absolute(),
+            args.max_workers,
+            args.exclude_dir,
+            args.include_sub_repos,
+        )
+    except (OSError, subprocess.CalledProcessError) as err:
+        print(f"Error discovering repositories: {err}", file=sys.stderr)
+        sys.exit(1)
 
     # setup background command list if needed
     exec_parallel_cmd: list[str] | None = (
@@ -647,7 +666,7 @@ def _run() -> None:
 
     execution_errors: list[tuple[Path, CommandResult]] = []
     fg_cmd_str: str = (
-        subprocess.list2cmdline(args.exec_cmd)
+        shlex.join(args.exec_cmd)
         if (args.exec_cmd and not args.parallel and not args.quiet)
         else ""
     )
@@ -670,7 +689,10 @@ def _run() -> None:
         # Handle Foreground Execution
         if args.exec_cmd and not args.parallel:
             if not args.quiet:
-                print(f"{Fore.YELLOW}[EXEC] {repo_path}: {fg_cmd_str}{Fore.RESET}")
+                print(
+                    f"{Fore.YELLOW}[EXEC] {repo_path}: {fg_cmd_str}{Fore.RESET}",
+                    flush=True,
+                )
 
             # Run interactively/sequentially (capture=False allows interaction)
             # However, for consistency with error tracking, we might want to
