@@ -128,7 +128,8 @@ def test_git_find_repo_standard_and_subrepos(tmp_path: Path) -> None:
     symlink_dir = tmp_path / "symlink_repo"
     symlink_dir.symlink_to(repo1, target_is_directory=True)
 
-    repos, sub_repos = git_rexec.git_find_repo(tmp_path, exclude_paths=[excluded])
+    with patch("git_rexec.git_toplevel", side_effect=lambda path: path):
+        repos, sub_repos = git_rexec.git_find_repo(tmp_path, exclude_paths=[excluded])
 
     assert repos == {repo1.resolve()}
     assert sub_repos == {sub1.resolve()}
@@ -184,8 +185,9 @@ def test_get_sub_repos_worktrees(tmp_path: Path) -> None:
     for p in (worktree_repo, wt1, wt2, bare_wt):
         p.mkdir()
 
-    # Create .git file so the worktree evaluation branch executes
-    (worktree_repo / ".git").write_text("gitdir: /somewhere", encoding="utf-8")
+    # Create .git files for the worktrees
+    for p in (worktree_repo, wt1, wt2):
+        (p / ".git").write_text("gitdir: /somewhere", encoding="utf-8")
 
     # Includes:
     # - worktree_repo (should be ignored because it matches resolved_repo_path)
@@ -240,8 +242,12 @@ def test_get_sub_repos_submodules(tmp_path: Path) -> None:
 
 
 def test_get_sub_repos_none(tmp_path: Path) -> None:
-    """Return empty set when neither .git file nor .gitmodules file exists."""
-    assert git_rexec.get_sub_repos(tmp_path.resolve()) == set()
+    """Return empty set when Git reports no other worktrees or submodules."""
+    mock_proc = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="", stderr=""
+    )
+    with patch("subprocess.run", return_value=mock_proc):
+        assert git_rexec.get_sub_repos(tmp_path.resolve()) == set()
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +309,7 @@ def test_format_parallel_output_empty_failure(tmp_path: Path) -> None:
 
 
 def test_format_parallel_output_normal_and_quiet(tmp_path: Path) -> None:
-    """Format tabs and indentation properly in normal and quiet modes."""
+    """Format indentation normally and preserve original output in quiet mode."""
     res = git_rexec.CommandResult(
         command=["printf", "a\tb"],
         returncode=0,
@@ -316,7 +322,7 @@ def test_format_parallel_output_normal_and_quiet(tmp_path: Path) -> None:
 
     quiet = git_rexec.format_parallel_output(tmp_path, res, quiet=True)
     assert "[EXEC-P]" not in quiet
-    assert quiet == "col1    col2\nerr\n"
+    assert quiet == "col1\tcol2\nerr\n"
 
 
 # ---------------------------------------------------------------------------
