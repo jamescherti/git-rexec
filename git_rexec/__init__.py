@@ -236,6 +236,7 @@ def get_sub_repos(
             ["git", "-C", str(resolved_repo_path), "worktree", "list", "--porcelain"],
             capture_output=True,
             text=True,
+            errors="surrogateescape",
             check=True,
         )
 
