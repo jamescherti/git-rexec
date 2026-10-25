@@ -231,32 +231,28 @@ def get_sub_repos(
     sub_repos: set[Path] = set()
 
     # Discover worktrees
-    if (resolved_repo_path / ".git").is_file():
-        worktree_proc: subprocess.CompletedProcess[str] = subprocess.run(
-            ["git", "-C", str(resolved_repo_path), "worktree", "list", "--porcelain"],
-            capture_output=True,
-            text=True,
-            errors="surrogateescape",
-            check=True,
-        )
+    worktree_proc: subprocess.CompletedProcess[str] = subprocess.run(
+        ["git", "-C", str(resolved_repo_path), "worktree", "list", "--porcelain"],
+        capture_output=True,
+        text=True,
+        errors="surrogateescape",
+        check=True,
+    )
 
-        current_worktree: Path | None = None
-        for line in worktree_proc.stdout.splitlines():
-            line = line.strip()
-
-            if line.startswith("worktree "):
-                current_worktree = Path(line[9:]).resolve()
-                # Exclude the current repo path to prevent self-referencing
-                if (
-                    current_worktree != resolved_repo_path
-                    and current_worktree.is_dir()
-                    and not is_excluded(current_worktree, resolved_exclude_paths)
-                ):
-                    sub_repos.add(current_worktree)
-            elif line == "bare" and current_worktree:
-                sub_repos.discard(current_worktree)
-
-        return sub_repos
+    current_worktree: Path | None = None
+    for line in worktree_proc.stdout.splitlines():
+        if line.startswith("worktree "):
+            current_worktree = Path(line[9:]).resolve()
+            # Exclude the current repo path to prevent self-referencing
+            if (
+                current_worktree != resolved_repo_path
+                and current_worktree.is_dir()
+                and (current_worktree / ".git").exists()
+                and not is_excluded(current_worktree, resolved_exclude_paths)
+            ):
+                sub_repos.add(current_worktree)
+        elif line == "bare" and current_worktree:
+            sub_repos.discard(current_worktree)
 
     # Discover submodules
     if (resolved_repo_path / ".gitmodules").is_file():
@@ -414,17 +410,29 @@ def discover_repos(
 
     # Extract and append sub-repositories concurrently if requested
     if include_sub_repos:
-        candidates: set[Path] = git_repos | git_worktrees
+        git_repos.update(git_worktrees)
+        candidates: set[Path] = {
+            repo for repo in git_repos if not is_excluded(repo, set_ex_paths)
+        }
         if candidates:
-            # TODO recursively get sub repos from sub repos
+            # Recursively get sub repos from sub repos
+            visited: set[Path] = set()
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # We must search for worktrees/submodules in BOTH repos and worktrees
-                futures: list[Future[set[Path]]] = [
-                    executor.submit(get_sub_repos, repo, set_ex_paths)
-                    for repo in candidates
-                ]
-                for future in as_completed(futures):
-                    git_repos.update(future.result())
+                while candidates:
+                    visited.update(candidates)
+                    # We must search for worktrees/submodules in BOTH repos and
+                    # worktrees
+                    futures: list[Future[set[Path]]] = [
+                        executor.submit(get_sub_repos, repo, set_ex_paths)
+                        for repo in candidates
+                    ]
+                    for future in as_completed(futures):
+                        git_repos.update(future.result())
+                    candidates = {
+                        repo
+                        for repo in git_repos - visited
+                        if not is_excluded(repo, set_ex_paths)
+                    }
 
     # Filter out excluded directories (applies dynamically to sub-repos too)
     if not set_ex_paths:
