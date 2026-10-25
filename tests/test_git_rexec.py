@@ -196,11 +196,11 @@ def test_get_sub_repos_worktrees(tmp_path: Path) -> None:
     # - wt1 ( separated by blank line )
     # - wt2 ( final block without trailing blank line )
     porcelain_output = (
-        f"worktree {worktree_repo}\nHEAD abc\n\n"
-        f"worktree {bare_wt}\nbare\n\n"
-        f"worktree {missing_wt}\nHEAD def\n\n"
-        f"worktree {wt1}\nHEAD 123\n\n"
-        f"worktree {wt2}\nHEAD 456"
+        f"worktree {worktree_repo}\0HEAD abc\0\0"
+        f"worktree {bare_wt}\0bare\0\0"
+        f"worktree {missing_wt}\0HEAD def\0\0"
+        f"worktree {wt1}\0HEAD 123\0\0"
+        f"worktree {wt2}\0HEAD 456"
     )
 
     mock_proc = subprocess.CompletedProcess(
@@ -223,12 +223,7 @@ def test_get_sub_repos_submodules(tmp_path: Path) -> None:
     # Create .gitmodules so the submodule evaluation branch executes
     (main_repo / ".gitmodules").touch()
 
-    submodule_output = (
-        f"{main_repo}\n"
-        f"{sm1}\n"
-        f"{sm_excl}\n"
-        f"{tmp_path / 'missing_sm'}\n"
-    )
+    submodule_output = f"{main_repo}\n{sm1}\n{sm_excl}\n{tmp_path / 'missing_sm'}\n"
 
     mock_proc = subprocess.CompletedProcess(
         args=[], returncode=0, stdout=submodule_output, stderr=""
@@ -243,9 +238,7 @@ def test_get_sub_repos_submodules(tmp_path: Path) -> None:
 
 def test_get_sub_repos_none(tmp_path: Path) -> None:
     """Return empty set when Git reports no other worktrees or submodules."""
-    mock_proc = subprocess.CompletedProcess(
-        args=[], returncode=0, stdout="", stderr=""
-    )
+    mock_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
     with patch("subprocess.run", return_value=mock_proc):
         assert git_rexec.get_sub_repos(tmp_path.resolve()) == set()
 

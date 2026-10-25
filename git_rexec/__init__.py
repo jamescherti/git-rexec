@@ -231,8 +231,11 @@ def get_sub_repos(
     sub_repos: set[Path] = set()
 
     # Discover worktrees
+    # Git's --porcelain output can contain literal newlines inside paths. Calling
+    # .splitlines() therefore corrupts those paths. -z uses Git's NUL-delimited output,
+    # which is safer.
     worktree_proc: subprocess.CompletedProcess[str] = subprocess.run(
-        ["git", "-C", str(resolved_repo_path), "worktree", "list", "--porcelain"],
+        ["git", "-C", str(resolved_repo_path), "worktree", "list", "--porcelain", "-z"],
         capture_output=True,
         text=True,
         errors="surrogateescape",
@@ -240,7 +243,7 @@ def get_sub_repos(
     )
 
     current_worktree: Path | None = None
-    for line in worktree_proc.stdout.splitlines():
+    for line in worktree_proc.stdout.split("\0"):
         if line.startswith("worktree "):
             current_worktree = Path(line[9:]).resolve()
             # Exclude the current repo path to prevent self-referencing
