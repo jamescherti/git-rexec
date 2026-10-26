@@ -250,20 +250,31 @@ def test_get_sub_repos_none(tmp_path: Path) -> None:
 
 def test_command_exists(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Check command availability across cwd=None, relative paths, and PATH."""
+    assert git_rexec.command_exists("") is False
+    assert git_rexec.command_exists("git", cwd=tmp_path / "nonexistent") is False
+
+    script = tmp_path / "local_script.sh"
+    script.touch(mode=0o755)
+
     monkeypatch.setattr(
         "shutil.which",
-        lambda cmd, **_kw: "/usr/bin/git" if cmd == "git" else None,
+        lambda cmd, **_kw: cmd if cmd in ("git", str(script)) else None,
     )
+
     # cwd is None
+    monkeypatch.chdir(tmp_path)
     assert git_rexec.command_exists("git", cwd=None) is True
     assert git_rexec.command_exists("missing-binary", cwd=None) is False
     assert git_rexec.command_exists("./local_script.sh", cwd=None) is True
+    assert git_rexec.command_exists("./missing_script.sh", cwd=None) is False
 
     # cwd is provided with relative path containing separator
-    assert git_rexec.command_exists("./local_script.sh", cwd=tmp_path) is False
-    script = tmp_path / "local_script.sh"
-    script.touch()
+    assert git_rexec.command_exists("./missing_script.sh", cwd=tmp_path) is False
     assert git_rexec.command_exists("./local_script.sh", cwd=tmp_path) is True
+
+    # Absolute path
+    assert git_rexec.command_exists(str(script), cwd=tmp_path) is True
+    assert git_rexec.command_exists(str(tmp_path / "missing.sh"), cwd=tmp_path) is False
 
     # cwd is provided with standard binary name
     assert git_rexec.command_exists("git", cwd=tmp_path) is True
@@ -302,8 +313,10 @@ def test_run_command_get_output_file_not_found(tmp_path: Path) -> None:
 
 def test_run_command_get_output_oserror(tmp_path: Path) -> None:
     """Return 126 when an OSError (like PermissionError) occurs."""
-    (tmp_path / "no_exec.sh").touch()
-    with patch("subprocess.run", side_effect=PermissionError("Permission denied")):
+    with (
+        patch("git_rexec.command_exists", return_value=True),
+        patch("subprocess.run", side_effect=PermissionError("Permission denied")),
+    ):
         res = git_rexec.run_command_get_output(tmp_path, ["./no_exec.sh"])
         assert res.returncode == 126
         assert "Cannot execute './no_exec.sh'" in res.stderr

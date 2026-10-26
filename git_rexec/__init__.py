@@ -310,32 +310,22 @@ def get_sub_repos(
 
 
 def command_exists(command: str, cwd: Path | None = None) -> bool:
-    """Check command availability, optionally relative to a directory.
+    """Check whether a command exists, optionally relative to a directory."""
+    if not command:
+        return False
 
-    :param command: Executable name or path.
-    :param cwd: Directory in which the subprocess will execute, or None to
-                defer relative paths and check system PATH only.
-    :return: True if an executable is available, otherwise False.
-    """
-    executable: Path = Path(command)
-    is_relative_with_sep: bool = (
-        not executable.is_absolute() and command != executable.name
-    )
+    cwd_path = cwd.absolute() if cwd else Path.cwd()
+    if not cwd_path.is_dir():
+        return False
 
-    if cwd is None:
-        if is_relative_with_sep:
-            return True
-        return shutil.which(command) is not None
+    cmd_path = Path(command)
+    relative = command != cmd_path.name
 
-    if is_relative_with_sep:
-        target: Path = cwd / executable
-        return target.exists() or shutil.which(str(target)) is not None
+    if relative or cmd_path.is_absolute():
+        target = cmd_path if cmd_path.is_absolute() else cwd_path / command
+        return shutil.which(str(target)) is not None
 
-    search_path: str = os.pathsep.join(
-        str(cwd / entry) if not Path(entry).is_absolute() else entry
-        for entry in os.get_exec_path()
-    )
-    return shutil.which(command, path=search_path) is not None
+    return shutil.which(command) is not None
 
 
 def run_command_get_output(
@@ -692,7 +682,7 @@ def _run() -> None:
         sys.exit(1)
 
     if_exec_cmd: list[str] | None = None
-    if args.if_exec is not None:
+    if args.if_exec:
         try:
             if_exec_cmd = shlex.split(args.if_exec)
         except ValueError as err:
