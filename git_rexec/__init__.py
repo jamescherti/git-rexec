@@ -317,6 +317,7 @@ def run_command_get_output(
         proc: subprocess.CompletedProcess[str] = subprocess.run(
             cmd_list,
             cwd=repo_path,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
             stderr=subprocess.STDOUT if capture else subprocess.DEVNULL,
             text=True,
@@ -489,9 +490,9 @@ def execute_parallel_tasks(
                 if result:
                     results.append(result)
             except (OSError, ValueError) as exc:
-                print(
-                    f"Error processing repository {repo_path}: {exc}", file=sys.stderr
-                )
+                raise RuntimeError(
+                    f"Error processing repository {repo_path}: {exc}"
+                ) from exc
 
     results.sort(key=lambda ctx: ctx.path)
     return results
@@ -685,9 +686,13 @@ def _run() -> None:
             RepoContext(path=repo) for repo in sorted(repos)
         ]
     else:
-        processed_repos = execute_parallel_tasks(
-            repos, exec_parallel_cmd, if_exec_cmd, args.max_workers
-        )
+        try:
+            processed_repos = execute_parallel_tasks(
+                repos, exec_parallel_cmd, if_exec_cmd, args.max_workers
+            )
+        except RuntimeError as err:
+            print(err, file=sys.stderr)
+            sys.exit(1)
 
     execution_errors: list[tuple[Path, CommandResult]] = []
     fg_cmd_str: str = ""
