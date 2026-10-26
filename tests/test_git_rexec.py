@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import builtins
 import importlib.util
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -318,6 +319,16 @@ def test_format_parallel_output_normal_and_quiet(tmp_path: Path) -> None:
     assert quiet == "col1\tcol2\nerr\n"
 
 
+def test_executable_is_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Accept repository-local commands and check PATH for other executables."""
+    monkeypatch.setattr(
+        "shutil.which", lambda cmd: "/usr/bin/git" if cmd == "git" else None
+    )
+    assert shutil.which("git")
+    assert not shutil.which("missing-binary")
+    assert not shutil.which("/missing/absolute-script")
+
+
 # ---------------------------------------------------------------------------
 # process_repo
 # ---------------------------------------------------------------------------
@@ -408,24 +419,34 @@ def test_discover_repos_via_find_repo_no_excludes(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_execute_parallel_tasks_success_and_exception(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Collect successful RepoContexts and log OSError/ValueError to stderr."""
+def test_execute_parallel_tasks_success(tmp_path: Path) -> None:
+    """Collect and sort successful repository contexts."""
     r1 = tmp_path / "r1"
     r2 = tmp_path / "r2"
 
-    def fake_process(repo: Path, *_args: object) -> git_rexec.RepoContext | None:
-        if repo == r1:
-            return git_rexec.RepoContext(path=r1)
-        raise OSError("disk error")
+    def fake_process(repo: Path, *_args: object) -> git_rexec.RepoContext:
+        return git_rexec.RepoContext(path=repo)
 
     with patch("git_rexec.process_repo", side_effect=fake_process):
-        results = git_rexec.execute_parallel_tasks({r1, r2}, None, None, max_workers=2)
-        assert len(results) == 1
-        assert results[0].path == r1
-        captured = capsys.readouterr()
-        assert f"Error processing repository {r2}: disk error" in captured.err
+        results = git_rexec.execute_parallel_tasks({r2, r1}, None, None, max_workers=2)
+
+    assert [result.path for result in results] == [r1, r2]
+
+
+@pytest.mark.parametrize("error", [OSError("disk error"), ValueError("invalid data")])
+def test_execute_parallel_tasks_exception(tmp_path: Path, error: Exception) -> None:
+    """Propagate worker errors with repository context and preserve the cause."""
+    repo = tmp_path / "repo"
+
+    with (
+        patch("git_rexec.process_repo", side_effect=error),
+        pytest.raises(
+            RuntimeError, match=f"Error processing repository {repo}: {error}"
+        ) as exc_info,
+    ):
+        git_rexec.execute_parallel_tasks({repo}, None, None, max_workers=2)
+
+    assert exc_info.value.__cause__ is error
 
 
 # ---------------------------------------------------------------------------
@@ -619,6 +640,32 @@ def test_main_if_exec_command_not_found(
         git_rexec.main()
     assert exc_info.value.code == 127
     assert "Command not found: 'missing_filter'" in capsys.readouterr().err
+
+
+def test_main_worker_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Exit unsuccessfully when a parallel worker raises RuntimeError."""
+    monkeypatch.setattr(
+        git_rexec,
+        "parse_args",
+        lambda: _make_args(directory=tmp_path, parallel=True, exec_cmd=["git"]),
+    )
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/git")
+    monkeypatch.setattr(git_rexec, "discover_repos", lambda *_a: {tmp_path})
+    monkeypatch.setattr(
+        git_rexec,
+        "execute_parallel_tasks",
+        MagicMock(side_effect=RuntimeError("worker failed")),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        git_rexec.main()
+
+    assert exc_info.value.code == 1
+    assert "worker failed" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
