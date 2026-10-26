@@ -314,18 +314,22 @@ def command_exists(command: str, cwd: Path | None = None) -> bool:
     if not command:
         return False
 
+    # The current working directory has to exist
     cwd_path = cwd.absolute() if cwd else Path.cwd()
     if not cwd_path.is_dir():
         return False
 
     cmd_path = Path(command)
-    relative = command != cmd_path.name
 
-    if relative or cmd_path.is_absolute():
-        target = cmd_path if cmd_path.is_absolute() else cwd_path / command
-        return shutil.which(str(target)) is not None
+    # Relative path with a separator (e.g., "./script.sh" or "bin/run"): Resolve it
+    # against cwd_path so shutil.which() checks the file inside the target directory
+    # instead of the current working directory.
+    if not cmd_path.is_absolute() and (
+        (os.sep in command) or (os.altsep and os.altsep in command)
+    ):
+        command = str(cwd_path / cmd_path)
 
-    return shutil.which(command) is not None
+    return bool(shutil.which(command))
 
 
 def run_command_get_output(
