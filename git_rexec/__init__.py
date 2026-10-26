@@ -231,33 +231,42 @@ def get_sub_repos(
     """
     sub_repos: set[Path] = set()
 
-    # Discover worktrees
-    # Git's --porcelain output can contain literal newlines inside paths. Calling
-    # .splitlines() therefore corrupts those paths. -z uses Git's NUL-delimited output,
-    # which is safer.
-    worktree_proc: subprocess.CompletedProcess[str] = subprocess.run(
-        ["git", "-C", str(resolved_repo_path), "worktree", "list", "--porcelain", "-z"],
-        capture_output=True,
-        text=True,
-        encoding=sys.getfilesystemencoding(),
-        errors="surrogateescape",
-        check=True,
-    )
+    if (resolved_repo_path / ".git").is_file():
+        # Discover worktrees
+        # Git's --porcelain output can contain literal newlines inside paths. Calling
+        # .splitlines() therefore corrupts those paths. -z uses Git's NUL-delimited
+        # output, which is safer.
+        worktree_proc: subprocess.CompletedProcess[str] = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(resolved_repo_path),
+                "worktree",
+                "list",
+                "--porcelain",
+                "-z",
+            ],
+            capture_output=True,
+            text=True,
+            encoding=sys.getfilesystemencoding(),
+            errors="surrogateescape",
+            check=True,
+        )
 
-    current_worktree: Path | None = None
-    for line in worktree_proc.stdout.split("\0"):
-        if line.startswith("worktree "):
-            current_worktree = Path(line[9:]).resolve()
-            # Exclude the current repo path to prevent self-referencing
-            if (
-                current_worktree != resolved_repo_path
-                and current_worktree.is_dir()
-                and (current_worktree / ".git").exists()
-                and not is_excluded(current_worktree, resolved_exclude_paths)
-            ):
-                sub_repos.add(current_worktree)
-        elif line == "bare" and current_worktree:
-            sub_repos.discard(current_worktree)
+        current_worktree: Path | None = None
+        for line in worktree_proc.stdout.split("\0"):
+            if line.startswith("worktree "):
+                current_worktree = Path(line[9:]).resolve()
+                # Exclude the current repo path to prevent self-referencing
+                if (
+                    current_worktree != resolved_repo_path
+                    and current_worktree.is_dir()
+                    and (current_worktree / ".git").exists()
+                    and not is_excluded(current_worktree, resolved_exclude_paths)
+                ):
+                    sub_repos.add(current_worktree)
+            elif line == "bare" and current_worktree:
+                sub_repos.discard(current_worktree)
 
     # Discover submodules
     if (resolved_repo_path / ".gitmodules").is_file():
@@ -321,6 +330,7 @@ def run_command_get_output(
             stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
             stderr=subprocess.STDOUT if capture else subprocess.DEVNULL,
             text=True,
+            encoding=sys.getfilesystemencoding(),
             errors="surrogateescape",
             check=False,
         )
@@ -415,15 +425,21 @@ def discover_repos(
         {Path(ex_dir).resolve() for ex_dir in exclude_dirs} if exclude_dirs else set()
     )
 
+    resolved_dir: Path = directory.resolve()
+    if is_excluded(resolved_dir, set_ex_paths):
+        return set()
+
     # Discover all repositories
-    toplevel: Path | None = git_toplevel(directory)
+    toplevel: Path | None = git_toplevel(resolved_dir)
 
     git_repos: set[Path] = set()
     git_worktrees: set[Path] = set()
     if toplevel:
-        git_repos = {toplevel}
+        resolved_toplevel: Path = toplevel.resolve()
+        if not is_excluded(resolved_toplevel, set_ex_paths):
+            git_repos = {resolved_toplevel}
     else:
-        git_repos, git_worktrees = git_find_repo(directory, set_ex_paths)
+        git_repos, git_worktrees = git_find_repo(resolved_dir, set_ex_paths)
 
     # Extract and append sub-repositories concurrently if requested
     if include_sub_repos:
