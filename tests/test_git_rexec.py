@@ -440,12 +440,11 @@ def test_execute_parallel_tasks_exception(tmp_path: Path, error: Exception) -> N
 
     with (
         patch("git_rexec.process_repo", side_effect=error),
-        pytest.raises(
-            RuntimeError, match=f"Error processing repository {repo}: {error}"
-        ) as exc_info,
+        pytest.raises(RuntimeError) as exc_info,
     ):
         git_rexec.execute_parallel_tasks({repo}, None, None, max_workers=2)
 
+    assert str(exc_info.value) == f"Error processing repository {repo}: {error}"
     assert exc_info.value.__cause__ is error
 
 
