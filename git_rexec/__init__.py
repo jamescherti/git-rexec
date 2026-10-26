@@ -309,6 +309,35 @@ def get_sub_repos(
     return sub_repos
 
 
+def command_exists(command: str, cwd: Path | None = None) -> bool:
+    """Check command availability, optionally relative to a directory.
+
+    :param command: Executable name or path.
+    :param cwd: Directory in which the subprocess will execute, or None to
+                defer relative paths and check system PATH only.
+    :return: True if an executable is available, otherwise False.
+    """
+    executable: Path = Path(command)
+    is_relative_with_sep: bool = (
+        not executable.is_absolute() and command != executable.name
+    )
+
+    if cwd is None:
+        if is_relative_with_sep:
+            return True
+        return shutil.which(command) is not None
+
+    if is_relative_with_sep:
+        target: Path = cwd / executable
+        return target.exists() or shutil.which(str(target)) is not None
+
+    search_path: str = os.pathsep.join(
+        str(cwd / entry) if not Path(entry).is_absolute() else entry
+        for entry in os.get_exec_path()
+    )
+    return shutil.which(command, path=search_path) is not None
+
+
 def run_command_get_output(
     repo_path: Path, cmd_list: list[str], capture: bool = True
 ) -> CommandResult:
@@ -323,6 +352,8 @@ def run_command_get_output(
         return CommandResult(command=[], returncode=0)
 
     try:
+        if not command_exists(cmd_list[0], cwd=repo_path):
+            raise FileNotFoundError(cmd_list[0])
         proc: subprocess.CompletedProcess[str] = subprocess.run(
             cmd_list,
             cwd=repo_path,
@@ -660,11 +691,6 @@ def _run() -> None:
         )
         sys.exit(1)
 
-    # Verify that the execution command exists
-    if args.exec_cmd and not shutil.which(args.exec_cmd[0]):
-        print(f"Error: Command not found: '{args.exec_cmd[0]}'", file=sys.stderr)
-        sys.exit(EXIT_COMMAND_NOT_FOUND)
-
     if_exec_cmd: list[str] | None = None
     if args.if_exec is not None:
         try:
@@ -675,9 +701,6 @@ def _run() -> None:
         if not if_exec_cmd:
             print("Error: --if-exec command cannot be empty", file=sys.stderr)
             sys.exit(2)
-        if not shutil.which(if_exec_cmd[0]):
-            print(f"Error: Command not found: '{if_exec_cmd[0]}'", file=sys.stderr)
-            sys.exit(EXIT_COMMAND_NOT_FOUND)
 
     # Discover Repositories
     try:
@@ -749,6 +772,8 @@ def _run() -> None:
                 # We use subprocess.check_call to allow direct stdout/stderr
                 # flow unless we want to capture for error summary. To match
                 # previous logic, we let it flow to stdout.
+                if not command_exists(args.exec_cmd[0], cwd=repo_path):
+                    raise FileNotFoundError(args.exec_cmd[0])
                 subprocess.check_call(args.exec_cmd, cwd=repo_path)
             except subprocess.CalledProcessError as err:
                 # Construct a dummy result for the error summary

@@ -28,7 +28,6 @@ from __future__ import annotations
 import argparse
 import builtins
 import importlib.util
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -245,8 +244,30 @@ def test_get_sub_repos_none(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# run_command_get_output
+# command_exists & run_command_get_output
 # ---------------------------------------------------------------------------
+
+
+def test_command_exists(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Check command availability across cwd=None, relative paths, and PATH."""
+    monkeypatch.setattr(
+        "shutil.which",
+        lambda cmd, **_kw: "/usr/bin/git" if cmd == "git" else None,
+    )
+    # cwd is None
+    assert git_rexec.command_exists("git", cwd=None) is True
+    assert git_rexec.command_exists("missing-binary", cwd=None) is False
+    assert git_rexec.command_exists("./local_script.sh", cwd=None) is True
+
+    # cwd is provided with relative path containing separator
+    assert git_rexec.command_exists("./local_script.sh", cwd=tmp_path) is False
+    script = tmp_path / "local_script.sh"
+    script.touch()
+    assert git_rexec.command_exists("./local_script.sh", cwd=tmp_path) is True
+
+    # cwd is provided with standard binary name
+    assert git_rexec.command_exists("git", cwd=tmp_path) is True
+    assert git_rexec.command_exists("missing-binary", cwd=tmp_path) is False
 
 
 def test_run_command_get_output_empty(tmp_path: Path) -> None:
@@ -261,7 +282,10 @@ def test_run_command_get_output_success(tmp_path: Path) -> None:
     mock_proc = subprocess.CompletedProcess(
         args=["echo", "hi"], returncode=0, stdout="hi\n", stderr=""
     )
-    with patch("subprocess.run", return_value=mock_proc):
+    with (
+        patch("git_rexec.command_exists", return_value=True),
+        patch("subprocess.run", return_value=mock_proc),
+    ):
         res = git_rexec.run_command_get_output(tmp_path, ["echo", "hi"])
         assert res.returncode == 0
         assert res.stdout == "hi\n"
@@ -270,7 +294,7 @@ def test_run_command_get_output_success(tmp_path: Path) -> None:
 
 def test_run_command_get_output_file_not_found(tmp_path: Path) -> None:
     """Return 127 when command binary is not found."""
-    with patch("subprocess.run", side_effect=FileNotFoundError()):
+    with patch("git_rexec.command_exists", return_value=False):
         res = git_rexec.run_command_get_output(tmp_path, ["missing_cmd"])
         assert res.returncode == 127
         assert "Command not found: 'missing_cmd'" in res.stderr
@@ -278,6 +302,7 @@ def test_run_command_get_output_file_not_found(tmp_path: Path) -> None:
 
 def test_run_command_get_output_oserror(tmp_path: Path) -> None:
     """Return 126 when an OSError (like PermissionError) occurs."""
+    (tmp_path / "no_exec.sh").touch()
     with patch("subprocess.run", side_effect=PermissionError("Permission denied")):
         res = git_rexec.run_command_get_output(tmp_path, ["./no_exec.sh"])
         assert res.returncode == 126
@@ -317,16 +342,6 @@ def test_format_parallel_output_normal_and_quiet(tmp_path: Path) -> None:
     quiet = git_rexec.format_parallel_output(tmp_path, res, quiet=True)
     assert "[EXEC-P]" not in quiet
     assert quiet == "col1\tcol2\nerr\n"
-
-
-def test_executable_is_available(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Accept repository-local commands and check PATH for other executables."""
-    monkeypatch.setattr(
-        "shutil.which", lambda cmd: "/usr/bin/git" if cmd == "git" else None
-    )
-    assert shutil.which("git")
-    assert not shutil.which("missing-binary")
-    assert not shutil.which("/missing/absolute-script")
 
 
 # ---------------------------------------------------------------------------
@@ -414,9 +429,25 @@ def test_discover_repos_via_find_repo_no_excludes(tmp_path: Path) -> None:
         assert repos == {r1, wt1}
 
 
+def test_discover_repos_root_excluded(tmp_path: Path) -> None:
+    """Return empty set immediately if root directory itself is excluded."""
+    repos = git_rexec.discover_repos(
+        directory=tmp_path,
+        max_workers=1,
+        exclude_dirs=[str(tmp_path)],
+        include_sub_repos=False,
+    )
+    assert repos == set()
+
+
 # ---------------------------------------------------------------------------
 # execute_parallel_tasks
 # ---------------------------------------------------------------------------
+
+
+def test_execute_parallel_tasks_empty() -> None:
+    """Return empty list immediately when repos set is empty."""
+    assert git_rexec.execute_parallel_tasks(set(), None, None, max_workers=1) == []
 
 
 def test_execute_parallel_tasks_success(tmp_path: Path) -> None:
@@ -576,17 +607,18 @@ def test_main_command_not_found(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Exit with 127 when exec_cmd binary is not in PATH."""
+    """Exit with 1 and print error summary when exec_cmd binary is not in PATH."""
     monkeypatch.setattr(
         git_rexec,
         "parse_args",
         lambda: _make_args(directory=tmp_path, exec_cmd=["nonexistent_bin"]),
     )
-    monkeypatch.setattr("shutil.which", lambda _cmd: None)
+    monkeypatch.setattr(git_rexec, "discover_repos", lambda *_a: {tmp_path})
+    monkeypatch.setattr("shutil.which", lambda _cmd, **_kw: None)
     with pytest.raises(SystemExit) as exc_info:
         git_rexec.main()
-    assert exc_info.value.code == 127
-    assert "Command not found" in capsys.readouterr().err
+    assert exc_info.value.code == 1
+    assert "Command not found: nonexistent_bin" in capsys.readouterr().out
 
 
 def test_main_invalid_if_exec_quotes(
@@ -628,17 +660,40 @@ def test_main_if_exec_command_not_found(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Exit with 127 when --if-exec binary is not in PATH."""
+    """Filter out repo and exit 0 when --if-exec binary is not in PATH."""
     monkeypatch.setattr(
         git_rexec,
         "parse_args",
         lambda: _make_args(directory=tmp_path, print=True, if_exec="missing_filter"),
     )
-    monkeypatch.setattr("shutil.which", lambda _cmd: None)
+    monkeypatch.setattr(git_rexec, "discover_repos", lambda *_a: {tmp_path})
+    monkeypatch.setattr("shutil.which", lambda _cmd, **_kw: None)
     with pytest.raises(SystemExit) as exc_info:
         git_rexec.main()
-    assert exc_info.value.code == 127
-    assert "Command not found: 'missing_filter'" in capsys.readouterr().err
+    assert exc_info.value.code == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_main_discover_repos_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Exit with code 1 when discover_repos raises an OSError."""
+    monkeypatch.setattr(
+        git_rexec,
+        "parse_args",
+        lambda: _make_args(directory=tmp_path, print=True),
+    )
+    monkeypatch.setattr(
+        git_rexec,
+        "discover_repos",
+        MagicMock(side_effect=OSError("discovery failed")),
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        git_rexec.main()
+    assert exc_info.value.code == 1
+    assert "Error discovering repositories: discovery failed" in capsys.readouterr().err
 
 
 def test_main_worker_failure(
@@ -652,7 +707,7 @@ def test_main_worker_failure(
         "parse_args",
         lambda: _make_args(directory=tmp_path, parallel=True, exec_cmd=["git"]),
     )
-    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/git")
+    monkeypatch.setattr("shutil.which", lambda _cmd, **_kw: "/usr/bin/git")
     monkeypatch.setattr(git_rexec, "discover_repos", lambda *_a: {tmp_path})
     monkeypatch.setattr(
         git_rexec,
@@ -684,7 +739,7 @@ def test_main_print_modes(  # noqa: PLR0913, PLR0917
     monkeypatch.setattr(git_rexec, "setproctitle", MagicMock(), raising=False)
     monkeypatch.setattr(git_rexec, "HAS_COLORAMA", True)
     monkeypatch.setattr(git_rexec, "colorama_init", MagicMock(), raising=False)
-    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/true")
+    monkeypatch.setattr("shutil.which", lambda _cmd, **_kw: "/usr/bin/true")
 
     monkeypatch.setattr(
         git_rexec,
@@ -722,7 +777,7 @@ def test_main_parallel_execution_with_error(
             directory=tmp_path, parallel=True, exec_cmd=["git", "status"]
         ),
     )
-    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/git")
+    monkeypatch.setattr("shutil.which", lambda _cmd, **_kw: "/usr/bin/git")
     monkeypatch.setattr(git_rexec, "discover_repos", lambda *_a: {tmp_path})
 
     p_res = git_rexec.CommandResult(
@@ -766,7 +821,7 @@ def test_main_foreground_execution(
             directory=tmp_path, parallel=False, quiet=False, exec_cmd=["git", "status"]
         ),
     )
-    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/git")
+    monkeypatch.setattr("shutil.which", lambda _cmd, **_kw: "/usr/bin/git")
     monkeypatch.setattr(git_rexec, "discover_repos", lambda *_a: {tmp_path})
     monkeypatch.setattr(
         git_rexec,
