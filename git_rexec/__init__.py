@@ -257,6 +257,7 @@ def get_sub_repos(
         for line in worktree_proc.stdout.split("\0"):
             if line.startswith("worktree "):
                 current_worktree = Path(line[9:]).resolve()
+
                 # Exclude the current repo path to prevent self-referencing
                 if (
                     current_worktree != resolved_repo_path
@@ -298,6 +299,7 @@ def get_sub_repos(
         for line in sm_proc.stdout.split("\0"):
             if not line:
                 continue
+
             sm_path: Path = Path(line).resolve()
             if (
                 sm_path != resolved_repo_path
@@ -446,31 +448,36 @@ def discover_repos(
     :param include_sub_repos: Whether to include sub-repositories.
     :return: A set of repository root paths.
     """
-    set_ex_paths: set[Path] = (
+    resolved_ex_dirs: set[Path] = (
         {Path(ex_dir).resolve() for ex_dir in exclude_dirs} if exclude_dirs else set()
     )
 
-    resolved_dir: Path = directory.resolve()
-    if is_excluded(resolved_dir, set_ex_paths):
+    resolved_directory: Path = directory.resolve()
+    if is_excluded(resolved_directory, resolved_ex_dirs):
         return set()
 
     # Discover all repositories
-    toplevel: Path | None = git_toplevel(resolved_dir)
+    toplevel: Path | None = git_toplevel(resolved_directory)
 
     git_repos: set[Path] = set()
     git_worktrees: set[Path] = set()
     if toplevel:
+        # We are inside a repository
         resolved_toplevel: Path = toplevel.resolve()
-        if not is_excluded(resolved_toplevel, set_ex_paths):
-            git_repos = {resolved_toplevel}
+        if not is_excluded(resolved_toplevel, resolved_ex_dirs):
+            if (resolved_toplevel / ".git").is_file():
+                git_worktrees = {resolved_toplevel}
+            else:
+                git_repos = {resolved_toplevel}
     else:
-        git_repos, git_worktrees = git_find_repo(resolved_dir, set_ex_paths)
+        # Recursively discover other repositories
+        git_repos, git_worktrees = git_find_repo(resolved_directory, resolved_ex_dirs)
 
     # Extract and append sub-repositories concurrently if requested
     if include_sub_repos:
         git_repos.update(git_worktrees)
         candidates: set[Path] = {
-            repo for repo in git_repos if not is_excluded(repo, set_ex_paths)
+            repo for repo in git_repos if not is_excluded(repo, resolved_ex_dirs)
         }
         if candidates:
             # Recursively get sub repos from sub repos
@@ -481,22 +488,27 @@ def discover_repos(
                     # We must search for worktrees/submodules in BOTH repos and
                     # worktrees
                     futures: list[Future[set[Path]]] = [
-                        executor.submit(get_sub_repos, repo, set_ex_paths)
+                        executor.submit(get_sub_repos, repo, resolved_ex_dirs)
                         for repo in candidates
                     ]
+
                     for future in as_completed(futures):
                         git_repos.update(future.result())
+
                     candidates = {
                         repo
                         for repo in git_repos - visited
-                        if not is_excluded(repo, set_ex_paths)
+                        if not is_excluded(repo, resolved_ex_dirs)
                     }
 
+        # Remove worktrees from the list
+        git_repos -= git_worktrees
+
     # Filter out excluded directories (applies dynamically to sub-repos too)
-    if not set_ex_paths:
+    if not resolved_ex_dirs:
         return git_repos
 
-    return {repo for repo in git_repos if not is_excluded(repo, set_ex_paths)}
+    return {repo for repo in git_repos if not is_excluded(repo, resolved_ex_dirs)}
 
 
 def execute_parallel_tasks(

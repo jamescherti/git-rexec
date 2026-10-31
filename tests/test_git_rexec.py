@@ -439,7 +439,7 @@ def test_discover_repos_via_find_repo_no_excludes(tmp_path: Path) -> None:
             exclude_dirs=[],
             include_sub_repos=True,
         )
-        assert repos == {r1, wt1}
+        assert repos == {r1}
 
 
 def test_discover_repos_root_excluded(tmp_path: Path) -> None:
