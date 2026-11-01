@@ -56,6 +56,10 @@ test = [
   "pytest-cov",
   "ruff",
   "mypy",
+  "types-PyYAML",
+  "types-colorama",
+  "colorama",
+  "setproctitle",
 ]
 
 [project.urls]
