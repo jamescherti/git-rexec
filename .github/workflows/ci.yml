@@ -39,7 +39,8 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Pre-built binaries of Python 3.9 not available on 'ubuntu-latest'
+        os: [ubuntu-24.04, windows-latest, macos-latest]
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
 
     steps:
