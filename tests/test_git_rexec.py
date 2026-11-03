@@ -2,7 +2,7 @@
 #
 # Author: James Cherti
 # URL: https://github.com/jamescherti/git-rexec
-# Version: 1.0.4
+# Version: 1.1.0
 #
 # Copyright (C) 2019-2026 James Cherti
 #
