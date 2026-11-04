@@ -143,6 +143,39 @@ options:
   --print0              Separate the paths with a null character (only when no command is provided)
 ```
 
+## Frequently Asked Questions
+
+### Why use git-rexec instead of find and xargs?
+
+It is possible to use `find` and `xargs` to achieve a flexible pipeline. For example, to discover all Git repositories starting from the current directory and run `git status` in parallel, one could use:
+
+```bash
+find . \
+    -type d \
+    -exec bash -c '[[ "$(git -C "$1" rev-parse --is-inside-work-tree 2>/dev/null)" == true ]]' '' {} \; \
+    -prune \
+    -print0 \
+| xargs -0 -P10 -I{} git -C {} status
+```
+
+While standard shell utilities like `find` and `xargs` are highly capable, `git-rexec` addresses performance limitations and edge cases in shell pipelines, reducing complex commands to a single command:
+
+```bash
+git-rexec -p -j 10 -- git status
+```
+
+The `git-rexec` command-line tool offers significant performance improvements. A traditional `find -exec bash -c 'git ...'` spawns separate processes for every directory visited during discovery. By avoiding this, `git-rexec` is faster. According to the author's benchmark, `git-rexec` is 4.36 times faster than the `find` and `xargs` command.
+
+Additionally, `git-rexec` improves output readability. Standard `xargs` makes it difficult to trace output back to a specific repository when operating concurrently. The `git-rexec` tool automatically prefixes all output with the corresponding repository context, adding indentation and optional colors during parallel execution. It also executes non-Git commands directly within the repository root, removing the need for `sh -c 'cd "$1" && ...'` wrappers, and includes built-in arguments for handling sub-repositories (`-s`), exclusions (`--exclude-dir`), and conditional execution (`--if-exec`).
+
+Furthermore, `git-rexec` handles nested repository edge cases natively. Using `find` with `git rev-parse --is-inside-work-tree` often fails within umbrella repositories containing nested clones. The shell evaluation triggers a prune at the root directory, preventing the discovery of the nested repositories. The `git-rexec` command parses these structures correctly by default.
+
+For workflows requiring strict separation between discovery and execution, or to cache a static list of repositories, `git-rexec` provides the `--print` and `--print0` arguments:
+
+```bash
+git-rexec --print0 | xargs -0 -P10 -I{} git -C {} fetch --verbose
+```
+
 ## License
 
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
