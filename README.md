@@ -53,6 +53,9 @@ If this helps your workflow, please support the project by **⭐ starring git-re
 - Filter target repositories based on the exit code of a conditional check (`--if-exec`).
 - Exclude specific directories from the search path.
 - Export discovered repository paths for integration with other shell tools (using `--print` or `--print0`).
+- Optional `pygit2` dependency speeds up discovery across large directory trees by using libgit2 bindings instead of spawning `git` subprocesses.
+- Optional `colorama` dependency provides color coded terminal output for better visibility and easier parsing of parallel execution results.
+- Optional `setproctitle` dependency sets the process title to `git-rexec` for easier tracking in process monitoring tools.
 
 ## Installation
 
