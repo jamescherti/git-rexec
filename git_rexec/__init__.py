@@ -99,6 +99,133 @@ class RepoContext:
     parallel_result: CommandResult | None = None
 
 
+class GitBackend:
+    """Provide low-level Git plumbing operations.
+
+    Currently supports the 'git' command-line backend, structured to allow
+    future backends (e.g., libgit2) to be plugged in.
+    """
+
+    def __init__(self, backend: str = "git") -> None:
+        """Initialize the Git backend.
+
+        :param backend: The backend engine to use (currently only 'git').
+        """
+        if backend != "git":
+            raise ValueError(f"Unsupported Git backend: {backend}")
+        self.backend: str = backend
+
+    def toplevel(self, repo_path: Path) -> Path | None:
+        """Return the absolute path to the top-level directory of a Git repository.
+
+        :param repo_path: Path inside the Git repository.
+        :return: Path to the repository's top-level directory, or None if not a
+                 Git repo.
+        """
+        try:
+            proc: subprocess.CompletedProcess[str] = subprocess.run(
+                ["git", "-C", str(repo_path), "rev-parse", "--show-toplevel"],
+                capture_output=True,
+                text=True,
+                # This allows handling Git repository paths containing filenames
+                # that are not valid UTF-8. With text=True, subprocess.run() decodes
+                # Git's output into a string. By default, decoding errors can raise
+                # UnicodeDecodeError. Using errors="surrogateescape" provides:
+                # 1. Lossless decoding: Invalid UTF-8 bytes are represented using
+                # Unicode surrogate code points (U+DC80 through U+DCFF).
+                # 2. Round-trip preservation: When the resulting path is passed back to
+                # filesystem operations or subprocesses, Python can encode those
+                # surrogate characters back into their original bytes.
+                encoding=sys.getfilesystemencoding(),
+                errors="surrogateescape",
+                check=True,
+            )
+            return Path(proc.stdout.removesuffix("\n")).resolve()
+        except (subprocess.CalledProcessError, OSError):
+            return None
+
+    def list_worktrees(self, resolved_repo_path: Path) -> set[Path]:
+        """Return a set of non-bare worktree paths associated with a repository.
+
+        :param resolved_repo_path: The resolved path to the repository or worktree.
+        :return: A set of resolved paths to the worktrees.
+        """
+        worktrees: set[Path] = set()
+
+        # Discover worktrees
+        # Git's --porcelain output can contain literal newlines inside paths. Calling
+        # .splitlines() therefore corrupts those paths. -z uses Git's NUL-delimited
+        # output, which is safer.
+        worktree_proc: subprocess.CompletedProcess[str] = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(resolved_repo_path),
+                "worktree",
+                "list",
+                "--porcelain",
+                "-z",
+            ],
+            capture_output=True,
+            text=True,
+            encoding=sys.getfilesystemencoding(),
+            errors="surrogateescape",
+            check=True,
+        )
+
+        current_worktree: Path | None = None
+        for line in worktree_proc.stdout.split("\0"):
+            if line.startswith("worktree "):
+                current_worktree = Path(line[9:]).resolve()
+                worktrees.add(current_worktree)
+            elif line == "bare" and current_worktree:
+                worktrees.discard(current_worktree)
+
+        return worktrees
+
+    def list_submodules(self, resolved_repo_path: Path) -> set[Path]:
+        """Return a set of submodule paths for a given repository.
+
+        :param resolved_repo_path: The resolved path to the repository.
+        :return: A set of resolved paths to the submodules.
+        """
+        submodules: set[Path] = set()
+
+        sm_proc: subprocess.CompletedProcess[str] = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(resolved_repo_path),
+                "submodule",
+                "foreach",
+                "--quiet",
+                # Use the running Python interpreter for NUL-delimited paths.
+                shlex.join(
+                    [
+                        sys.executable,
+                        "-c",
+                        "import os, sys; sys.stdout.buffer.write("
+                        "os.getcwdb() + b'\\0')",
+                    ]
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            encoding=sys.getfilesystemencoding(),
+            errors="surrogateescape",
+            check=True,
+        )
+
+        for line in sm_proc.stdout.split("\0"):
+            if not line:
+                continue
+
+            sm_path: Path = Path(line).resolve()
+            submodules.add(sm_path)
+
+        return submodules
+
+
 def is_excluded(
     resolved_target: Path,
     resolved_exclude_paths: set[Path] | list[Path] | None,
@@ -116,36 +243,6 @@ def is_excluded(
         resolved_target == ex or resolved_target.is_relative_to(ex)
         for ex in resolved_exclude_paths
     )
-
-
-def git_toplevel(repo_path: Path) -> Path | None:
-    """Return the absolute path to the top-level directory of a Git repository.
-
-    :param repo_path: Path inside the Git repository.
-    :return: Path to the repository's top-level directory, or None if not a
-             Git repo.
-    """
-    try:
-        proc: subprocess.CompletedProcess[str] = subprocess.run(
-            ["git", "-C", str(repo_path), "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-            # This allows handling Git repository paths containing filenames
-            # that are not valid UTF-8. With text=True, subprocess.run() decodes Git's
-            # output into a string. By default, decoding errors can raise
-            # UnicodeDecodeError. Using errors="surrogateescape" provides:
-            # 1. Lossless decoding: Invalid UTF-8 bytes are represented using Unicode
-            # surrogate code points (U+DC80 through U+DCFF).
-            # 2. Round-trip preservation: When the resulting path is passed back to
-            # filesystem operations or subprocesses, Python can encode those surrogate
-            # characters back into their original bytes.
-            encoding=sys.getfilesystemencoding(),
-            errors="surrogateescape",
-            check=True,
-        )
-        return Path(proc.stdout.removesuffix("\n")).resolve()
-    except (subprocess.CalledProcessError, OSError):
-        return None
 
 
 def git_find_repo(
@@ -220,11 +317,13 @@ def git_find_repo(
 
 
 def get_sub_repos(
+    git_backend: GitBackend,
     resolved_repo_path: Path,
     resolved_exclude_paths: set[Path] | list[Path] | None = None,
 ) -> set[Path]:
     """Extract worktrees and submodules from a Git repository or worktree.
 
+    :param git_backend: The GitBackend instance for plumbing operations.
     :param resolved_repo_path: The path to the standard repository or worktree.
     :param resolved_exclude_paths: Resolved directories to exclude.
     :return: A set of absolute paths to worktrees and submodules.
@@ -232,75 +331,19 @@ def get_sub_repos(
     sub_repos: set[Path] = set()
 
     if (resolved_repo_path / ".git").is_file():
-        # Discover worktrees
-        # Git's --porcelain output can contain literal newlines inside paths. Calling
-        # .splitlines() therefore corrupts those paths. -z uses Git's NUL-delimited
-        # output, which is safer.
-        worktree_proc: subprocess.CompletedProcess[str] = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(resolved_repo_path),
-                "worktree",
-                "list",
-                "--porcelain",
-                "-z",
-            ],
-            capture_output=True,
-            text=True,
-            encoding=sys.getfilesystemencoding(),
-            errors="surrogateescape",
-            check=True,
-        )
-
-        current_worktree: Path | None = None
-        for line in worktree_proc.stdout.split("\0"):
-            if line.startswith("worktree "):
-                current_worktree = Path(line[9:]).resolve()
-
-                # Exclude the current repo path to prevent self-referencing
-                if (
-                    current_worktree != resolved_repo_path
-                    and current_worktree.is_dir()
-                    and (current_worktree / ".git").exists()
-                    and not is_excluded(current_worktree, resolved_exclude_paths)
-                ):
-                    sub_repos.add(current_worktree)
-            elif line == "bare" and current_worktree:
-                sub_repos.discard(current_worktree)
+        for current_worktree in git_backend.list_worktrees(resolved_repo_path):
+            # Exclude the current repo path to prevent self-referencing
+            if (
+                current_worktree != resolved_repo_path
+                and current_worktree.is_dir()
+                and (current_worktree / ".git").exists()
+                and not is_excluded(current_worktree, resolved_exclude_paths)
+            ):
+                sub_repos.add(current_worktree)
 
     # Discover submodules
     if (resolved_repo_path / ".gitmodules").is_file():
-        sm_proc: subprocess.CompletedProcess[str] = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(resolved_repo_path),
-                "submodule",
-                "foreach",
-                "--quiet",
-                # Use the running Python interpreter for NUL-delimited paths.
-                shlex.join(
-                    [
-                        sys.executable,
-                        "-c",
-                        "import os, sys; sys.stdout.buffer.write("
-                        "os.getcwdb() + b'\\0')",
-                    ]
-                ),
-            ],
-            capture_output=True,
-            text=True,
-            encoding=sys.getfilesystemencoding(),
-            errors="surrogateescape",
-            check=True,
-        )
-
-        for line in sm_proc.stdout.split("\0"):
-            if not line:
-                continue
-
-            sm_path: Path = Path(line).resolve()
+        for sm_path in git_backend.list_submodules(resolved_repo_path):
             if (
                 sm_path != resolved_repo_path
                 and sm_path.is_dir()
@@ -438,10 +481,15 @@ def process_repo(
 
 
 def discover_repos(
-    directory: Path, max_workers: int, exclude_dirs: list[str], include_sub_repos: bool
+    git_backend: GitBackend,
+    directory: Path,
+    max_workers: int,
+    exclude_dirs: list[str],
+    include_sub_repos: bool,
 ) -> set[Path]:
     """Discover Git repositories starting from directory and apply exclusions.
 
+    :param git_backend: The GitBackend instance for plumbing operations.
     :param directory: The root directory for search.
     :param max_workers: Maximum number of threads/workers.
     :param exclude_dirs: Directories to exclude.
@@ -457,7 +505,7 @@ def discover_repos(
         return set()
 
     # Discover all repositories
-    toplevel: Path | None = git_toplevel(resolved_directory)
+    toplevel: Path | None = git_backend.toplevel(resolved_directory)
 
     git_repos: set[Path] = set()
     git_worktrees: set[Path] = set()
@@ -488,7 +536,9 @@ def discover_repos(
                     # We must search for worktrees/submodules in BOTH repos and
                     # worktrees
                     futures: list[Future[set[Path]]] = [
-                        executor.submit(get_sub_repos, repo, resolved_ex_dirs)
+                        executor.submit(
+                            get_sub_repos, git_backend, repo, resolved_ex_dirs
+                        )
                         for repo in candidates
                     ]
 
@@ -708,9 +758,12 @@ def _run() -> None:
             print("Error: --if-exec command cannot be empty", file=sys.stderr)
             sys.exit(2)
 
+    git_backend = GitBackend(backend="git")
+
     # Discover Repositories
     try:
         repos: set[Path] = discover_repos(
+            git_backend,
             args.directory.absolute(),
             args.max_workers,
             args.exclude_dir,

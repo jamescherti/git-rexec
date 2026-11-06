@@ -71,17 +71,24 @@ def test_optional_imports_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # ---------------------------------------------------------------------------
-# git_toplevel
+# GitBackend (init & toplevel)
 # ---------------------------------------------------------------------------
+
+
+def test_git_backend_invalid() -> None:
+    """Raise ValueError when an unsupported backend is requested."""
+    with pytest.raises(ValueError, match="Unsupported Git backend: libgit"):
+        git_rexec.GitBackend(backend="libgit")
 
 
 def test_git_toplevel_success(tmp_path: Path) -> None:
     """Return resolved Path when git rev-parse succeeds."""
+    backend = git_rexec.GitBackend()
     mock_proc = subprocess.CompletedProcess(
         args=[], returncode=0, stdout=f"{tmp_path}\n", stderr=""
     )
     with patch("subprocess.run", return_value=mock_proc) as mock_run:
-        result = git_rexec.git_toplevel(tmp_path)
+        result = backend.toplevel(tmp_path)
         assert result == tmp_path.resolve()
         mock_run.assert_called_once()
 
@@ -96,8 +103,9 @@ def test_git_toplevel_success(tmp_path: Path) -> None:
 )
 def test_git_toplevel_failure(tmp_path: Path, exc: Exception) -> None:
     """Return None when git rev-parse fails or raises OSError."""
+    backend = git_rexec.GitBackend()
     with patch("subprocess.run", side_effect=exc):
-        assert git_rexec.git_toplevel(tmp_path) is None
+        assert backend.toplevel(tmp_path) is None
 
 
 # ---------------------------------------------------------------------------
@@ -126,8 +134,7 @@ def test_git_find_repo_standard_and_subrepos(tmp_path: Path) -> None:
     symlink_dir = tmp_path / "symlink_repo"
     symlink_dir.symlink_to(repo1, target_is_directory=True)
 
-    with patch("git_rexec.git_toplevel", side_effect=lambda path: path):
-        repos, sub_repos = git_rexec.git_find_repo(tmp_path, exclude_paths=[excluded])
+    repos, sub_repos = git_rexec.git_find_repo(tmp_path, exclude_paths=[excluded])
 
     assert repos == {repo1.resolve()}
     assert sub_repos == {sub1.resolve()}
@@ -168,12 +175,13 @@ def test_git_find_repo_oserror_entry_is_dir(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# get_sub_repos
+# get_sub_repos (and GitBackend.list_worktrees / list_submodules)
 # ---------------------------------------------------------------------------
 
 
 def test_get_sub_repos_worktrees(tmp_path: Path) -> None:
     """Parse worktrees (including bare & trailing blocks) when .git is a file."""
+    backend = git_rexec.GitBackend()
     worktree_repo = (tmp_path / "worktree_repo").resolve()
     wt1 = (tmp_path / "wt1").resolve()
     wt2 = (tmp_path / "wt2").resolve()
@@ -205,12 +213,13 @@ def test_get_sub_repos_worktrees(tmp_path: Path) -> None:
         args=[], returncode=0, stdout=porcelain_output, stderr=""
     )
     with patch("subprocess.run", return_value=mock_proc):
-        result = git_rexec.get_sub_repos(worktree_repo)
+        result = git_rexec.get_sub_repos(backend, worktree_repo)
         assert result == {wt1, wt2}
 
 
 def test_get_sub_repos_submodules(tmp_path: Path) -> None:
     """Parse submodules when .gitmodules is a file."""
+    backend = git_rexec.GitBackend()
     main_repo = (tmp_path / "main").resolve()
     sm1 = (tmp_path / "sm1").resolve()
     sm_excl = (tmp_path / "excluded" / "sm_excl").resolve()
@@ -228,6 +237,7 @@ def test_get_sub_repos_submodules(tmp_path: Path) -> None:
     )
     with patch("subprocess.run", return_value=mock_proc):
         result = git_rexec.get_sub_repos(
+            backend,
             main_repo,
             resolved_exclude_paths=[(tmp_path / "excluded").resolve()],
         )
@@ -236,9 +246,10 @@ def test_get_sub_repos_submodules(tmp_path: Path) -> None:
 
 def test_get_sub_repos_none(tmp_path: Path) -> None:
     """Return empty set when Git reports no other worktrees or submodules."""
+    backend = git_rexec.GitBackend()
     mock_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
     with patch("subprocess.run", return_value=mock_proc):
-        assert git_rexec.get_sub_repos(tmp_path.resolve()) == set()
+        assert git_rexec.get_sub_repos(backend, tmp_path.resolve()) == set()
 
 
 # ---------------------------------------------------------------------------
@@ -400,6 +411,7 @@ def test_discover_repos_from_toplevel_with_subrepos_and_excludes(
     tmp_path: Path,
 ) -> None:
     """Discover top-level repo, fetch sub-repos, and filter excluded paths."""
+    backend = git_rexec.GitBackend()
     top = tmp_path / "top"
     sub_keep = tmp_path / "top" / "sub_keep"
     sub_excl = tmp_path / "top" / "excluded" / "sub_excl"
@@ -407,10 +419,11 @@ def test_discover_repos_from_toplevel_with_subrepos_and_excludes(
         p.mkdir(parents=True)
 
     with (
-        patch("git_rexec.git_toplevel", return_value=top),
+        patch.object(backend, "toplevel", return_value=top),
         patch("git_rexec.get_sub_repos", return_value={sub_keep, sub_excl}),
     ):
         repos = git_rexec.discover_repos(
+            git_backend=backend,
             directory=top,
             max_workers=2,
             exclude_dirs=[str(tmp_path / "top" / "excluded")],
@@ -421,17 +434,19 @@ def test_discover_repos_from_toplevel_with_subrepos_and_excludes(
 
 def test_discover_repos_via_find_repo_no_excludes(tmp_path: Path) -> None:
     """Fallback to git_find_repo when directory is not inside a single git repo."""
+    backend = git_rexec.GitBackend()
     r1 = tmp_path / "r1"
     wt1 = tmp_path / "wt1"
     r1.mkdir()
     wt1.mkdir()
 
     with (
-        patch("git_rexec.git_toplevel", return_value=None),
+        patch.object(backend, "toplevel", return_value=None),
         patch("git_rexec.git_find_repo", return_value=({r1}, {wt1})),
         patch("git_rexec.get_sub_repos", return_value={wt1}),
     ):
         repos = git_rexec.discover_repos(
+            git_backend=backend,
             directory=tmp_path,
             max_workers=1,
             exclude_dirs=[],
@@ -442,7 +457,9 @@ def test_discover_repos_via_find_repo_no_excludes(tmp_path: Path) -> None:
 
 def test_discover_repos_root_excluded(tmp_path: Path) -> None:
     """Return empty set immediately if root directory itself is excluded."""
+    backend = git_rexec.GitBackend()
     repos = git_rexec.discover_repos(
+        git_backend=backend,
         directory=tmp_path,
         max_workers=1,
         exclude_dirs=[str(tmp_path)],
