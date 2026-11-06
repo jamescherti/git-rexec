@@ -50,6 +50,7 @@ dependencies = []
 [project.optional-dependencies]
 colors = ["colorama"]
 proctitle = ["setproctitle"]
+pygit2 = ["pygit2"]
 test = [
   "pytest",
   "pytest-cov",
@@ -59,6 +60,7 @@ test = [
   "types-colorama",
   "colorama",
   "setproctitle",
+  "pygit2",
 ]
 
 [project.urls]

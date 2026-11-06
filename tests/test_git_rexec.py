@@ -42,11 +42,11 @@ import git_rexec
 
 
 def test_optional_imports_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test fallback behavior when colorama and setproctitle are missing."""
+    """Test fallback behavior when colorama, setproctitle, and pygit2 are missing."""
     orig_import = builtins.__import__
 
     def fake_import(name: str, *args: Any, **kwargs: Any) -> Any:
-        if name in ("colorama", "setproctitle"):
+        if name in ("colorama", "setproctitle", "pygit2"):
             raise ImportError(f"No module named {name}")
         return orig_import(name, *args, **kwargs)
 
@@ -65,13 +65,14 @@ def test_optional_imports_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert mod.HAS_COLORAMA is False
     assert getattr(mod, "HAS_SETPROCTITLE", False) is False
+    assert getattr(mod, "HAS_PYGIT2", False) is False
     assert mod.Fore.YELLOW == ""
     assert mod.Fore.RED == ""
     assert mod.Fore.RESET == ""
 
 
 # ---------------------------------------------------------------------------
-# GitBackend (init & toplevel)
+# GitBackend (init & git CLI backend)
 # ---------------------------------------------------------------------------
 
 
@@ -83,7 +84,7 @@ def test_git_backend_invalid() -> None:
 
 def test_git_toplevel_success(tmp_path: Path) -> None:
     """Return resolved Path when git rev-parse succeeds."""
-    backend = git_rexec.GitBackend()
+    backend = git_rexec.GitBackend(backend="git")
     mock_proc = subprocess.CompletedProcess(
         args=[], returncode=0, stdout=f"{tmp_path}\n", stderr=""
     )
@@ -103,9 +104,121 @@ def test_git_toplevel_success(tmp_path: Path) -> None:
 )
 def test_git_toplevel_failure(tmp_path: Path, exc: Exception) -> None:
     """Return None when git rev-parse fails or raises OSError."""
-    backend = git_rexec.GitBackend()
+    backend = git_rexec.GitBackend(backend="git")
     with patch("subprocess.run", side_effect=exc):
         assert backend.toplevel(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# GitBackend (pygit2 backend)
+# ---------------------------------------------------------------------------
+
+
+class DummyGitError(Exception):
+    """Dummy Git error."""
+
+    pass
+
+
+@pytest.fixture
+def mock_pygit2(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Mock pygit2."""
+    fake_pygit2 = MagicMock()
+    fake_pygit2.GitError = DummyGitError
+    monkeypatch.setattr(git_rexec, "HAS_PYGIT2", True)
+    monkeypatch.setattr(git_rexec, "pygit2", fake_pygit2, raising=False)
+    return fake_pygit2
+
+
+def test_git_backend_pygit2_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Raise ValueError if pygit2 is requested but not available."""
+    monkeypatch.setattr(git_rexec, "HAS_PYGIT2", False)
+    with pytest.raises(ValueError):
+        git_rexec.GitBackend(backend="pygit2")
+
+
+def test_git_toplevel_pygit2_success(tmp_path: Path, mock_pygit2: MagicMock) -> None:
+    """Return resolved Path when pygit2 successfully discovers a repository."""
+    mock_pygit2.discover_repository.return_value = str(tmp_path / ".git")
+    mock_repo = MagicMock()
+    mock_repo.is_bare = False
+    mock_repo.workdir = str(tmp_path)
+    mock_pygit2.Repository.return_value = mock_repo
+
+    backend = git_rexec.GitBackend(backend="pygit2")
+    result = backend.toplevel(tmp_path)
+    assert result == tmp_path.resolve()
+
+
+def test_git_toplevel_pygit2_not_found(tmp_path: Path, mock_pygit2: MagicMock) -> None:
+    """Return None when pygit2 fails to discover a repository."""
+    mock_pygit2.discover_repository.return_value = None
+
+    backend = git_rexec.GitBackend(backend="pygit2")
+    result = backend.toplevel(tmp_path)
+    assert result is None
+
+
+def test_git_toplevel_pygit2_exception(tmp_path: Path, mock_pygit2: MagicMock) -> None:
+    """Return None when pygit2 raises a GitError."""
+    mock_pygit2.discover_repository.side_effect = DummyGitError("Not a repo")
+
+    backend = git_rexec.GitBackend(backend="pygit2")
+    result = backend.toplevel(tmp_path)
+    assert result is None
+
+
+def test_list_worktrees_pygit2(tmp_path: Path, mock_pygit2: MagicMock) -> None:
+    """Return worktree paths using pygit2."""
+    mock_repo = MagicMock()
+    mock_repo.is_bare = False
+    mock_repo.workdir = str(tmp_path)
+    mock_repo.listall_worktrees.return_value = ["wt1"]
+
+    mock_wt = MagicMock()
+    mock_wt.path = str(tmp_path / "wt1")
+    mock_repo.lookup_worktree.return_value = mock_wt
+    mock_pygit2.Repository.return_value = mock_repo
+
+    backend = git_rexec.GitBackend(backend="pygit2")
+    result = backend.list_worktrees(tmp_path)
+    assert result == {tmp_path.resolve(), (tmp_path / "wt1").resolve()}
+
+
+def test_list_submodules_pygit2(tmp_path: Path, mock_pygit2: MagicMock) -> None:
+    """Return submodule paths using pygit2 listall_submodules."""
+    mock_repo = MagicMock()
+    mock_repo.is_bare = False
+    mock_repo.workdir = str(tmp_path)
+    mock_repo.listall_submodules.return_value = ["sm1"]
+
+    mock_sm = MagicMock()
+    mock_sm.path = "sm1"
+    mock_repo.lookup_submodule.return_value = mock_sm
+    mock_pygit2.Repository.return_value = mock_repo
+
+    backend = git_rexec.GitBackend(backend="pygit2")
+    result = backend.list_submodules(tmp_path)
+    assert result == {(tmp_path / "sm1").resolve()}
+
+
+def test_list_submodules_pygit2_fallback(
+    tmp_path: Path, mock_pygit2: MagicMock
+) -> None:
+    """Return submodule paths using pygit2 submodules property."""
+    mock_repo = MagicMock()
+    mock_repo.is_bare = False
+    mock_repo.workdir = str(tmp_path)
+    del mock_repo.listall_submodules  # Force using the .submodules property
+
+    mock_sm = MagicMock()
+    mock_sm.path = "sm1"
+    mock_repo.submodules = [mock_sm]
+    mock_pygit2.Repository.return_value = mock_repo
+
+    backend = git_rexec.GitBackend(backend="pygit2")
+    result = backend.list_submodules(tmp_path)
+    assert result == {(tmp_path / "sm1").resolve()}
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +294,7 @@ def test_git_find_repo_oserror_entry_is_dir(tmp_path: Path) -> None:
 
 def test_get_sub_repos_worktrees(tmp_path: Path) -> None:
     """Parse worktrees (including bare & trailing blocks) when .git is a file."""
-    backend = git_rexec.GitBackend()
+    backend = git_rexec.GitBackend(backend="git")
     worktree_repo = (tmp_path / "worktree_repo").resolve()
     wt1 = (tmp_path / "wt1").resolve()
     wt2 = (tmp_path / "wt2").resolve()
@@ -219,7 +332,7 @@ def test_get_sub_repos_worktrees(tmp_path: Path) -> None:
 
 def test_get_sub_repos_submodules(tmp_path: Path) -> None:
     """Parse submodules when .gitmodules is a file."""
-    backend = git_rexec.GitBackend()
+    backend = git_rexec.GitBackend(backend="git")
     main_repo = (tmp_path / "main").resolve()
     sm1 = (tmp_path / "sm1").resolve()
     sm_excl = (tmp_path / "excluded" / "sm_excl").resolve()
@@ -246,7 +359,7 @@ def test_get_sub_repos_submodules(tmp_path: Path) -> None:
 
 def test_get_sub_repos_none(tmp_path: Path) -> None:
     """Return empty set when Git reports no other worktrees or submodules."""
-    backend = git_rexec.GitBackend()
+    backend = git_rexec.GitBackend(backend="git")
     mock_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
     with patch("subprocess.run", return_value=mock_proc):
         assert git_rexec.get_sub_repos(backend, tmp_path.resolve()) == set()
@@ -411,7 +524,7 @@ def test_discover_repos_from_toplevel_with_subrepos_and_excludes(
     tmp_path: Path,
 ) -> None:
     """Discover top-level repo, fetch sub-repos, and filter excluded paths."""
-    backend = git_rexec.GitBackend()
+    backend = git_rexec.GitBackend(backend="git")
     top = tmp_path / "top"
     sub_keep = tmp_path / "top" / "sub_keep"
     sub_excl = tmp_path / "top" / "excluded" / "sub_excl"
@@ -434,7 +547,7 @@ def test_discover_repos_from_toplevel_with_subrepos_and_excludes(
 
 def test_discover_repos_via_find_repo_no_excludes(tmp_path: Path) -> None:
     """Fallback to git_find_repo when directory is not inside a single git repo."""
-    backend = git_rexec.GitBackend()
+    backend = git_rexec.GitBackend(backend="git")
     r1 = tmp_path / "r1"
     wt1 = tmp_path / "wt1"
     r1.mkdir()
@@ -457,7 +570,7 @@ def test_discover_repos_via_find_repo_no_excludes(tmp_path: Path) -> None:
 
 def test_discover_repos_root_excluded(tmp_path: Path) -> None:
     """Return empty set immediately if root directory itself is excluded."""
-    backend = git_rexec.GitBackend()
+    backend = git_rexec.GitBackend(backend="git")
     repos = git_rexec.discover_repos(
         git_backend=backend,
         directory=tmp_path,

@@ -96,11 +96,12 @@ pip install "git-rexec[colors,proctitle]"
 
 - `colorama`: Provides color-coded terminal output.
 - `setproctitle`: Sets the process title for process monitoring tools.
+- `pygit2`: Speeds up discovery and execution time by using libgit2 bindings for Git operations instead of spawning `git` subprocesses.
 
 You can install the optional Python dependencies via pip:
 
 ```bash
-pip install colorama setproctitle
+pip install colorama setproctitle pygit2
 ```
 
 ## Usage

@@ -71,6 +71,14 @@ except ImportError:
     HAS_SETPROCTITLE = False
 
 
+try:
+    import pygit2
+
+    HAS_PYGIT2 = True
+except ImportError:
+    HAS_PYGIT2 = False
+
+
 @dataclass
 class CommandResult:
     """Store the result of a subprocess command execution.
@@ -102,17 +110,24 @@ class RepoContext:
 class GitBackend:
     """Provide low-level Git plumbing operations.
 
-    Currently supports the 'git' command-line backend, structured to allow
-    future backends (e.g., libgit2) to be plugged in.
+    Currently supports 'pygit2' and the 'git' command-line backend.
     """
 
-    def __init__(self, backend: str = "git") -> None:
+    def __init__(self, backend: str | None = None) -> None:
         """Initialize the Git backend.
 
-        :param backend: The backend engine to use (currently only 'git').
+        :param backend: The backend engine to use ('pygit2' or 'git'). If None,
+                        it defaults to 'pygit2' if available, otherwise 'git'.
         """
-        if backend != "git":
+        if backend is None:
+            backend = "pygit2" if HAS_PYGIT2 else "git"
+
+        if backend == "pygit2" and not HAS_PYGIT2:
+            raise ValueError("pygit2 backend requested but pygit2 is not installed.")
+
+        if backend not in ("git", "pygit2"):
             raise ValueError(f"Unsupported Git backend: {backend}")
+
         self.backend: str = backend
 
     def toplevel(self, repo_path: Path) -> Path | None:
@@ -122,6 +137,20 @@ class GitBackend:
         :return: Path to the repository's top-level directory, or None if not a
                  Git repo.
         """
+        if self.backend == "pygit2":
+            try:
+                repo_dir = pygit2.discover_repository(str(repo_path))
+                if not repo_dir:
+                    return None
+
+                repo = pygit2.Repository(repo_dir)
+                if repo.is_bare or not repo.workdir:
+                    return None
+
+                return Path(repo.workdir).resolve()
+            except pygit2.GitError:
+                return None
+
         try:
             proc: subprocess.CompletedProcess[str] = subprocess.run(
                 ["git", "-C", str(repo_path), "rev-parse", "--show-toplevel"],
@@ -151,6 +180,24 @@ class GitBackend:
         :return: A set of resolved paths to the worktrees.
         """
         worktrees: set[Path] = set()
+
+        if self.backend == "pygit2":
+            try:
+                repo = pygit2.Repository(str(resolved_repo_path))
+                if not repo.is_bare and repo.workdir:
+                    worktrees.add(Path(repo.workdir).resolve())
+
+                if hasattr(repo, "listall_worktrees"):
+                    for wt_name in repo.listall_worktrees():
+                        try:
+                            wt = repo.lookup_worktree(wt_name)
+                            if wt and hasattr(wt, "path") and wt.path:
+                                worktrees.add(Path(wt.path).resolve())
+                        except pygit2.GitError:
+                            continue
+            except pygit2.GitError:
+                pass
+            return worktrees
 
         # Discover worktrees
         # Git's --porcelain output can contain literal newlines inside paths. Calling
@@ -190,6 +237,30 @@ class GitBackend:
         :return: A set of resolved paths to the submodules.
         """
         submodules: set[Path] = set()
+
+        if self.backend == "pygit2":
+            try:
+                repo = pygit2.Repository(str(resolved_repo_path))
+                if repo.is_bare or not repo.workdir:
+                    return submodules
+
+                workdir = Path(repo.workdir)
+
+                if hasattr(repo, "listall_submodules"):
+                    for sm_name in repo.listall_submodules():
+                        try:
+                            sm = repo.lookup_submodule(sm_name)  # type: ignore[attr-defined]
+                            if sm and hasattr(sm, "path") and sm.path:
+                                submodules.add((workdir / sm.path).resolve())
+                        except pygit2.GitError:
+                            continue
+                elif hasattr(repo, "submodules"):
+                    for sm in repo.submodules:
+                        if sm and hasattr(sm, "path") and sm.path:
+                            submodules.add((workdir / sm.path).resolve())
+            except pygit2.GitError:
+                pass
+            return submodules
 
         sm_proc: subprocess.CompletedProcess[str] = subprocess.run(
             [
