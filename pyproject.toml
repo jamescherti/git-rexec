@@ -1,7 +1,7 @@
 #
 # Author: James Cherti
 # URL: https://github.com/jamescherti/git-rexec
-# Version: 1.1.0
+# Version: 1.1.1
 #
 # Copyright (C) 2019-2026 James Cherti
 #
@@ -25,7 +25,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "git-rexec"
-version = "1.1.0"
+version = "1.1.1"
 description = "Locate Git repositories and execute commands against them in parallel."
 readme = "README.md"
 requires-python = ">=3.10"
