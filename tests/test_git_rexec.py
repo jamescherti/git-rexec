@@ -581,6 +581,28 @@ def test_discover_repos_root_excluded(tmp_path: Path) -> None:
     assert repos == set()
 
 
+def test_discover_repos_ignores_empty_exclude_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Empty --exclude-dir values must not resolve to the CWD and hide repos."""
+    backend = git_rexec.GitBackend(backend="git")
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    with (
+        patch.object(backend, "toplevel", return_value=None),
+        patch("git_rexec.git_find_repo", return_value=({repo}, set())),
+    ):
+        repos = git_rexec.discover_repos(
+            git_backend=backend,
+            directory=tmp_path,
+            max_workers=1,
+            exclude_dirs=[""],
+            include_sub_repos=False,
+        )
+        assert repos == {repo}
+
+
 # ---------------------------------------------------------------------------
 # execute_parallel_tasks
 # ---------------------------------------------------------------------------

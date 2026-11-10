@@ -568,7 +568,9 @@ def discover_repos(
     :return: A set of repository root paths.
     """
     resolved_ex_dirs: set[Path] = (
-        {Path(ex_dir).resolve() for ex_dir in exclude_dirs} if exclude_dirs else set()
+        {Path(ex_dir).resolve() for ex_dir in exclude_dirs if str(ex_dir)}
+        if exclude_dirs
+        else set()
     )
 
     resolved_directory: Path = directory.resolve()
