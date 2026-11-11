@@ -56,6 +56,7 @@ If this helps your workflow, please support the project by **⭐ starring git-re
 - Optional `pygit2` dependency speeds up discovery across large directory trees by using libgit2 bindings instead of spawning `git` subprocesses.
 - Optional `colorama` dependency provides color coded terminal output for better visibility and easier parsing of parallel execution results.
 - Optional `setproctitle` dependency sets the process title to `git-rexec` for easier tracking in process monitoring tools.
+- Skip directory exploration and repository discovery when a .git-rexec-ignore file is present in a directory.
 
 ## Installation
 
@@ -148,6 +149,15 @@ options:
 ```
 
 ## Frequently Asked Questions
+
+### How to exclude directories?
+
+The `git-rexec` utility skips directory trees during repository discovery through:
+
+- **Explicit Exclusions:** Passing paths via the `--exclude` command line option bypasses traversal for those target directories and their contents.
+- **Marker Files:** File system tree scanning stops immediately when a `.git-rexec-ignore` file is found inside a directory, skipping all nested subdirectories.
+
+This behavior allows developers to filter out specific folder hierarchies, such as vendor trees, archives, or external dependencies, either automatically via marker files or explicitly through command line arguments.
 
 ### Why use git-rexec instead of find and xargs?
 

@@ -531,9 +531,11 @@ def test_discover_repos_from_toplevel_with_subrepos_and_excludes(
     for p in (top, sub_keep, sub_excl):
         p.mkdir(parents=True)
 
+    (top / ".gitmodules").touch()
+
     with (
         patch.object(backend, "toplevel", return_value=top),
-        patch("git_rexec.get_sub_repos", return_value={sub_keep, sub_excl}),
+        patch.object(backend, "list_submodules", return_value={sub_keep, sub_excl}),
     ):
         repos = git_rexec.discover_repos(
             git_backend=backend,
@@ -999,3 +1001,162 @@ def test_dunder_main_signals(
     with pytest.raises(SystemExit) as exc_info:
         git_rexec.main()
     assert exc_info.value.code == expected_code
+
+
+@pytest.mark.parametrize(
+    "kind",
+    ["missing", "file", "directory", "symlink", "broken_symlink", "symlink_directory"],
+)
+def test_has_ignore_marker(tmp_path: Path, kind: str) -> None:
+    """Accept regular files and symlinks to files as ignore markers."""
+    marker = tmp_path / ".git-rexec-ignore"
+    if kind == "file":
+        marker.touch()
+    elif kind == "directory":
+        marker.mkdir()
+    elif kind in {"symlink", "broken_symlink", "symlink_directory"}:
+        target = tmp_path / "target"
+        if kind == "symlink":
+            target.touch()
+        elif kind == "symlink_directory":
+            target.mkdir()
+        try:
+            marker.symlink_to(target, target_is_directory=kind == "symlink_directory")
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"Symbolic links are unavailable: {exc}")
+
+    assert git_rexec.has_ignore_marker(tmp_path) is (kind in {"file", "symlink"})
+
+
+@pytest.mark.parametrize("git_file", [False, True], ids=["repository", "worktree"])
+@pytest.mark.parametrize(
+    "marker_first", [False, True], ids=["git-first", "marker-first"]
+)
+def test_git_find_repo_marker_precedes_repository_detection(
+    tmp_path: Path, git_file: bool, marker_first: bool
+) -> None:
+    """Exclude marked repositories regardless of directory entry order."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    if git_file:
+        (repo / ".git").touch()
+    else:
+        (repo / ".git").mkdir()
+    (repo / ".git-rexec-ignore").touch()
+    original_scandir = git_rexec.os.scandir
+
+    def ordered_scandir(path: Path) -> Any:
+        """Supply a controlled entry order for the marked repository.
+
+        :param path: Directory to scan.
+        :return: A directory scanning context manager.
+        """
+        if Path(path) != repo:
+            return original_scandir(path)
+        with original_scandir(path) as entries:
+            ordered = sorted(
+                entries,
+                key=lambda entry: entry.name == ".git-rexec-ignore",
+                reverse=marker_first,
+            )
+        context = MagicMock()
+        context.__enter__.return_value = iter(ordered)
+        context.__exit__.return_value = False
+        return context
+
+    with patch.object(git_rexec.os, "scandir", side_effect=ordered_scandir):
+        assert git_rexec.git_find_repo(tmp_path) == (set(), set())
+
+
+def test_git_find_repo_prunes_marked_tree_only(tmp_path: Path) -> None:
+    """Skip marked descendants while preserving an unmarked sibling repository."""
+    blocked = tmp_path / "blocked"
+    (blocked / "nested" / ".git").mkdir(parents=True)
+    (blocked / ".git-rexec-ignore").touch()
+    allowed = tmp_path / "allowed"
+    (allowed / ".git").mkdir(parents=True)
+
+    assert git_rexec.git_find_repo(tmp_path) == ({allowed.resolve()}, set())
+
+
+@pytest.mark.parametrize("marker_location", ["root", "ancestor"])
+def test_git_find_repo_marked_start(tmp_path: Path, marker_location: str) -> None:
+    """Honor markers at or above the starting directory."""
+    root = tmp_path / "root"
+    (root / "repo" / ".git").mkdir(parents=True)
+    marker_parent = root if marker_location == "root" else tmp_path
+    (marker_parent / ".git-rexec-ignore").touch()
+
+    assert git_rexec.git_find_repo(root) == (set(), set())
+
+
+@pytest.mark.parametrize("inside_repository", [False, True])
+@pytest.mark.parametrize("marker_location", ["start", "ancestor"])
+def test_discover_repos_marked_start(
+    tmp_path: Path, inside_repository: bool, marker_location: str
+) -> None:
+    """Honor starting markers through Git lookup and traversal entry points."""
+    root = tmp_path / "root"
+    start = root / "nested"
+    (start / "repo" / ".git").mkdir(parents=True)
+    (root / ".git").mkdir()
+    marker_parent = start if marker_location == "start" else root
+    (marker_parent / ".git-rexec-ignore").touch()
+    backend = MagicMock(spec=git_rexec.GitBackend)
+    backend.toplevel.return_value = root if inside_repository else None
+
+    assert git_rexec.discover_repos(backend, start, 1, [], False) == set()
+
+
+@pytest.mark.parametrize("kind", ["submodule", "worktree"])
+@pytest.mark.parametrize("marker_location", ["repository", "ancestor"])
+def test_get_sub_repos_filters_marked_targets(
+    tmp_path: Path, kind: str, marker_location: str
+) -> None:
+    """Exclude Git-discovered targets with direct or ancestor markers."""
+    source = tmp_path / "source"
+    source.mkdir()
+    if kind == "worktree":
+        (source / ".git").touch()
+    else:
+        (source / ".git").mkdir()
+    (source / ".gitmodules").touch()
+    blocked_parent = tmp_path / "blocked"
+    blocked = blocked_parent / "repo"
+    allowed = tmp_path / "allowed"
+    for repo in (blocked, allowed):
+        repo.mkdir(parents=True)
+        (repo / ".git").touch()
+    marker_parent = blocked if marker_location == "repository" else blocked_parent
+    (marker_parent / ".git-rexec-ignore").touch()
+    backend = MagicMock(spec=git_rexec.GitBackend)
+    backend.toplevel.return_value = source
+    backend.list_worktrees.return_value = (
+        {blocked, allowed} if kind == "worktree" else set()
+    )
+    backend.list_submodules.return_value = (
+        {blocked, allowed} if kind == "submodule" else set()
+    )
+
+    assert git_rexec.get_sub_repos(backend, source) == {allowed}
+    expected = {allowed} if kind == "worktree" else {source, allowed}
+    assert git_rexec.discover_repos(backend, source, 2, [], True) == expected
+
+
+def test_discover_repos_skips_marked_source(tmp_path: Path) -> None:
+    """Avoid expanding a source repository excluded by a marker."""
+    (tmp_path / ".git").touch()
+    (tmp_path / ".gitmodules").touch()
+    (tmp_path / ".git-rexec-ignore").touch()
+    backend = MagicMock(spec=git_rexec.GitBackend)
+
+    backend.toplevel.return_value = tmp_path
+
+    assert (
+        git_rexec.discover_repos(
+            backend, tmp_path, max_workers=1, exclude_dirs=[], include_sub_repos=True
+        )
+        == set()
+    )
+    backend.list_worktrees.assert_not_called()
+    backend.list_submodules.assert_not_called()

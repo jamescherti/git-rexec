@@ -46,6 +46,7 @@ from pathlib import Path
 
 EXIT_COMMAND_NOT_FOUND: int = 127
 EXIT_CANNOT_EXECUTE: int = 126
+GIT_REXEC_IGNORE_FILE: str = ".git-rexec-ignore"
 
 try:
     from colorama import Fore
@@ -316,6 +317,28 @@ def is_excluded(
     )
 
 
+def has_ignore_marker(directory: Path) -> bool:
+    """Check whether a directory contains an ignore marker.
+
+    Symbolic links to regular files are treated as ignore markers.
+
+    :param directory: Directory path to check.
+    :return: True if the marker resolves to a regular file.
+    """
+    return (directory / GIT_REXEC_IGNORE_FILE).is_file()
+
+
+def is_ignored_directory(directory: Path) -> bool:
+    """Check for a regular ignore marker in a directory or its ancestors.
+
+    :param directory: Absolute directory path to check.
+    :return: True if a regular marker excludes the directory tree.
+    """
+    return has_ignore_marker(directory) or any(
+        has_ignore_marker(parent) for parent in directory.parents
+    )
+
+
 def git_find_repo(
     root: Path, exclude_paths: set[Path] | list[Path] | None = None
 ) -> tuple[set[Path], set[Path]]:
@@ -340,6 +363,12 @@ def git_find_repo(
     if is_excluded(resolved_root, resolved_excludes):
         return git_repos, git_worktrees
 
+    try:
+        if is_ignored_directory(resolved_root):
+            return git_repos, git_worktrees
+    except OSError:
+        return git_repos, git_worktrees
+
     dirs_to_visit: list[Path] = [resolved_root]
     while dirs_to_visit:
         current_dir: Path = dirs_to_visit.pop()
@@ -353,9 +382,6 @@ def git_find_repo(
                 for entry in iter_scandir:
                     try:
                         if entry.name == ".git":
-                            # TODO Check toplevel?
-                            # if git_toplevel(current_dir) != current_dir:
-                            #     continue
                             if entry.is_dir(follow_symlinks=False):
                                 # Found the repository, stop evaluating this directory
                                 is_repo = True
@@ -369,7 +395,9 @@ def git_find_repo(
                         # Add the directory to dirs_in_current to scan it recursively
                         elif entry.is_dir(follow_symlinks=False):
                             entry_path: Path = Path(entry.path)
-                            if is_excluded(entry_path, resolved_excludes):
+                            if is_excluded(
+                                entry_path, resolved_excludes
+                            ) or has_ignore_marker(entry_path):
                                 # Excluded
                                 continue
 
@@ -409,6 +437,7 @@ def get_sub_repos(
                 and current_worktree.is_dir()
                 and (current_worktree / ".git").exists()
                 and not is_excluded(current_worktree, resolved_exclude_paths)
+                and not is_ignored_directory(current_worktree)
             ):
                 sub_repos.add(current_worktree)
 
@@ -419,6 +448,7 @@ def get_sub_repos(
                 sm_path != resolved_repo_path
                 and sm_path.is_dir()
                 and not is_excluded(sm_path, resolved_exclude_paths)
+                and not is_ignored_directory(sm_path)
             ):
                 sub_repos.add(sm_path)
 
@@ -572,7 +602,9 @@ def discover_repos(
     )
 
     resolved_directory: Path = directory.resolve()
-    if is_excluded(resolved_directory, resolved_ex_dirs):
+    if is_excluded(resolved_directory, resolved_ex_dirs) or is_ignored_directory(
+        resolved_directory
+    ):
         return set()
 
     # Discover all repositories
@@ -583,7 +615,9 @@ def discover_repos(
     if toplevel:
         # We are inside a repository
         resolved_toplevel: Path = toplevel.resolve()
-        if not is_excluded(resolved_toplevel, resolved_ex_dirs):
+        if not is_excluded(
+            resolved_toplevel, resolved_ex_dirs
+        ) and not is_ignored_directory(resolved_toplevel):
             if (resolved_toplevel / ".git").is_file():
                 git_worktrees = {resolved_toplevel}
             else:
@@ -595,9 +629,7 @@ def discover_repos(
     # Extract and append sub-repositories concurrently if requested
     if include_sub_repos:
         git_repos.update(git_worktrees)
-        candidates: set[Path] = {
-            repo for repo in git_repos if not is_excluded(repo, resolved_ex_dirs)
-        }
+        candidates: set[Path] = git_repos.copy()
         if candidates:
             # Recursively get sub repos from sub repos
             visited: set[Path] = set()
@@ -616,20 +648,12 @@ def discover_repos(
                     for future in as_completed(futures):
                         git_repos.update(future.result())
 
-                    candidates = {
-                        repo
-                        for repo in git_repos - visited
-                        if not is_excluded(repo, resolved_ex_dirs)
-                    }
+                    candidates = git_repos - visited
 
         # Remove worktrees from the list
         git_repos -= git_worktrees
 
-    # Filter out excluded directories (applies dynamically to sub-repos too)
-    if not resolved_ex_dirs:
-        return git_repos
-
-    return {repo for repo in git_repos if not is_excluded(repo, resolved_ex_dirs)}
+    return git_repos
 
 
 def execute_parallel_tasks(
