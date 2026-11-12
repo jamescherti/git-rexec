@@ -39,6 +39,8 @@ import shutil
 import subprocess
 import sys
 import textwrap
+from collections import deque
+from collections.abc import Iterable
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from multiprocessing import cpu_count
@@ -340,11 +342,11 @@ def is_ignored_directory(directory: Path) -> bool:
 
 
 def git_find_repo(
-    root: Path, exclude_paths: set[Path] | list[Path] | None = None
+    root: Path | Iterable[Path], exclude_paths: set[Path] | list[Path] | None = None
 ) -> tuple[set[Path], set[Path]]:
-    """Recursively find all Git repositories under the root path using Python.
+    """Recursively find all Git repositories under the supplied roots.
 
-    :param root: Directory to search under.
+    :param root: A directory or collection of directories to scan together.
     :param exclude_paths: Directories to exclude to optimize traversal.
     :return: A tuple containing standard repository paths and worktrees
     paths.
@@ -357,21 +359,21 @@ def git_find_repo(
         {ex_path.resolve() for ex_path in exclude_paths} if exclude_paths else set()
     )
 
-    resolved_root: Path = root.resolve()
+    roots = (root,) if isinstance(root, Path) else root
+    dirs_to_visit: deque[Path] = deque()
+    visited: set[Path] = set()
+    for directory in {path.resolve() for path in roots}:
+        if not is_excluded(directory, resolved_excludes) and not is_ignored_directory(
+            directory
+        ):
+            dirs_to_visit.append(directory)
 
-    # Do not begin traversal if the root itself is excluded
-    if is_excluded(resolved_root, resolved_excludes):
-        return git_repos, git_worktrees
-
-    try:
-        if is_ignored_directory(resolved_root):
-            return git_repos, git_worktrees
-    except OSError:
-        return git_repos, git_worktrees
-
-    dirs_to_visit: list[Path] = [resolved_root]
     while dirs_to_visit:
-        current_dir: Path = dirs_to_visit.pop()
+        current_dir: Path = dirs_to_visit.popleft()
+        if current_dir in visited:
+            continue
+
+        visited.add(current_dir)
 
         try:
             with os.scandir(current_dir) as iter_scandir:
@@ -583,15 +585,15 @@ def process_repo(
 
 def discover_repos(
     git_backend: GitBackend,
-    directory: Path,
+    directories: Iterable[Path] | Path,
     max_workers: int,
     exclude_dirs: list[str],
     include_sub_repos: bool,
 ) -> set[Path]:
-    """Discover Git repositories starting from directory and apply exclusions.
+    """Discover Git repositories across all scan roots in one traversal.
 
     :param git_backend: The GitBackend instance for plumbing operations.
-    :param directory: The root directory for search.
+    :param directories: One or more directories to search.
     :param max_workers: Maximum number of threads/workers.
     :param exclude_dirs: Directories to exclude.
     :param include_sub_repos: Whether to include sub-repositories.
@@ -601,30 +603,14 @@ def discover_repos(
         {Path(ex_dir).resolve() for ex_dir in exclude_dirs} if exclude_dirs else set()
     )
 
-    resolved_directory: Path = directory.resolve()
-    if is_excluded(resolved_directory, resolved_ex_dirs) or is_ignored_directory(
-        resolved_directory
-    ):
-        return set()
+    roots = (directories,) if isinstance(directories, Path) else directories
+    scan_roots: set[Path] = set()
+    for directory in {path.resolve() for path in roots}:
+        if is_excluded(directory, resolved_ex_dirs) or is_ignored_directory(directory):
+            continue
+        scan_roots.add(git_backend.toplevel(directory) or directory)
 
-    # Discover all repositories
-    toplevel: Path | None = git_backend.toplevel(resolved_directory)
-
-    git_repos: set[Path] = set()
-    git_worktrees: set[Path] = set()
-    if toplevel:
-        # We are inside a repository
-        resolved_toplevel: Path = toplevel.resolve()
-        if not is_excluded(
-            resolved_toplevel, resolved_ex_dirs
-        ) and not is_ignored_directory(resolved_toplevel):
-            if (resolved_toplevel / ".git").is_file():
-                git_worktrees = {resolved_toplevel}
-            else:
-                git_repos = {resolved_toplevel}
-    else:
-        # Recursively discover other repositories
-        git_repos, git_worktrees = git_find_repo(resolved_directory, resolved_ex_dirs)
+    git_repos, git_worktrees = git_find_repo(scan_roots, resolved_ex_dirs)
 
     # Extract and append sub-repositories concurrently if requested
     if include_sub_repos:
@@ -711,8 +697,10 @@ def parse_args() -> argparse.Namespace:
         "-C",
         "--directory",
         type=Path,
-        default=Path(),
-        help="Root directory to search (defaults to current directory)",
+        action="append",
+        dest="directories",
+        metavar="DIRECTORY",
+        help="Root directory to search (repeatable, defaults to the current directory)",
     )
     parser.add_argument(
         "--exclude-dir",
@@ -835,12 +823,11 @@ def _run() -> None:
         print("Nothing to do.", file=sys.stderr)
         sys.exit(2)
 
-    if not args.directory.is_dir():
-        print(
-            f"Error: Directory not found: '{args.directory}'",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    directories: list[Path] = args.directories or [Path.cwd()]
+    for directory in directories:
+        if not directory.is_dir():
+            print(f"Error: Directory not found: '{directory}'", file=sys.stderr)
+            sys.exit(1)
 
     if_exec_cmd: list[str] | None = None
     if args.if_exec:
@@ -859,7 +846,7 @@ def _run() -> None:
     try:
         repos: set[Path] = discover_repos(
             git_backend,
-            args.directory.absolute(),
+            directories,
             args.max_workers,
             args.exclude_dir,
             args.include_sub_repos,

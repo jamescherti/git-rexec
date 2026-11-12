@@ -531,6 +531,7 @@ def test_discover_repos_from_toplevel_with_subrepos_and_excludes(
     for p in (top, sub_keep, sub_excl):
         p.mkdir(parents=True)
 
+    (top / ".git").mkdir()
     (top / ".gitmodules").touch()
 
     with (
@@ -539,7 +540,7 @@ def test_discover_repos_from_toplevel_with_subrepos_and_excludes(
     ):
         repos = git_rexec.discover_repos(
             git_backend=backend,
-            directory=top,
+            directories=[top],
             max_workers=2,
             exclude_dirs=[str(tmp_path / "top" / "excluded")],
             include_sub_repos=True,
@@ -562,7 +563,7 @@ def test_discover_repos_via_find_repo_no_excludes(tmp_path: Path) -> None:
     ):
         repos = git_rexec.discover_repos(
             git_backend=backend,
-            directory=tmp_path,
+            directories=[tmp_path],
             max_workers=1,
             exclude_dirs=[],
             include_sub_repos=True,
@@ -575,7 +576,7 @@ def test_discover_repos_root_excluded(tmp_path: Path) -> None:
     backend = git_rexec.GitBackend(backend="git")
     repos = git_rexec.discover_repos(
         git_backend=backend,
-        directory=tmp_path,
+        directories=[tmp_path],
         max_workers=1,
         exclude_dirs=[str(tmp_path)],
         include_sub_repos=False,
@@ -636,6 +637,8 @@ def test_parse_args_valid(monkeypatch: pytest.MonkeyPatch) -> None:
             "git-rexec",
             "-C",
             "/tmp",
+            "--directory",
+            "projects",
             "--exclude-dir",
             "vendor",
             "-p",
@@ -652,7 +655,7 @@ def test_parse_args_valid(monkeypatch: pytest.MonkeyPatch) -> None:
         ],
     )
     args = git_rexec.parse_args()
-    assert args.directory == Path("/tmp")
+    assert args.directories == [Path("/tmp"), Path("projects")]
     assert args.exclude_dir == ["vendor"]
     assert args.parallel is True
     assert args.if_exec == "git status"
@@ -702,8 +705,8 @@ def test_print_error_summary(
 
 
 def _make_args(**overrides: object) -> argparse.Namespace:
-    defaults = {
-        "directory": Path(),
+    defaults: dict[str, Any] = {
+        "directories": None,
         "exclude_dir": [],
         "parallel": False,
         "if_exec": None,
@@ -729,6 +732,46 @@ def test_main_nothing_to_do(
     assert "Nothing to do." in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("explicit_roots", [True, False], ids=["repeated-C", "cwd"])
+def test_main_shared_scan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    explicit_roots: bool,
+) -> None:
+    """Verify recursive discovery and a single scan of overlapping directories."""
+    first = tmp_path / "first"
+    nested = first / "nested"
+    second = tmp_path / "second"
+    repos = [nested / "one", second / "nested" / "two"]
+    unrelated = tmp_path / "other" / "three"
+    for repo in [*repos, unrelated]:
+        (repo / ".git").mkdir(parents=True)
+
+    monkeypatch.chdir(tmp_path)
+    options = ["-C", "first", "-C", "second", "-C", "first/nested", "-C", "first"]
+    monkeypatch.setattr(
+        sys, "argv", ["git-rexec", *(options if explicit_roots else []), "--print"]
+    )
+    with (
+        patch.object(git_rexec.GitBackend, "toplevel", return_value=None),
+        patch.object(
+            git_rexec, "discover_repos", wraps=git_rexec.discover_repos
+        ) as discover,
+        patch.object(git_rexec.os, "scandir", wraps=git_rexec.os.scandir) as scan,
+        pytest.raises(SystemExit) as status,
+    ):
+        git_rexec.main()
+
+    assert status.value.code == 0
+    discover.assert_called_once()
+    expected = repos if explicit_roots else [*repos, unrelated]
+    assert capsys.readouterr().out.splitlines() == sorted(map(str, expected))
+    scanned = [call.args[0] for call in scan.call_args_list]
+    assert nested in scanned
+    assert len(scanned) == len(set(scanned))
+
+
 def test_main_missing_directory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -737,7 +780,9 @@ def test_main_missing_directory(
     """Exit with code 1 when -C directory does not exist."""
     bad_dir = tmp_path / "does_not_exist"
     monkeypatch.setattr(
-        git_rexec, "parse_args", lambda: _make_args(directory=bad_dir, print=True)
+        git_rexec,
+        "parse_args",
+        lambda: _make_args(directories=[tmp_path, bad_dir], print=True),
     )
     with pytest.raises(SystemExit) as exc_info:
         git_rexec.main()
@@ -754,7 +799,7 @@ def test_main_command_not_found(
     monkeypatch.setattr(
         git_rexec,
         "parse_args",
-        lambda: _make_args(directory=tmp_path, exec_cmd=["nonexistent_bin"]),
+        lambda: _make_args(directories=[tmp_path], exec_cmd=["nonexistent_bin"]),
     )
     monkeypatch.setattr(git_rexec, "discover_repos", lambda *_a: {tmp_path})
     monkeypatch.setattr("shutil.which", lambda _cmd, **_kw: None)
@@ -773,7 +818,9 @@ def test_main_invalid_if_exec_quotes(
     monkeypatch.setattr(
         git_rexec,
         "parse_args",
-        lambda: _make_args(directory=tmp_path, print=True, if_exec="echo 'unclosed"),
+        lambda: _make_args(
+            directories=[tmp_path], print=True, if_exec="echo 'unclosed"
+        ),
     )
     with pytest.raises(SystemExit) as exc_info:
         git_rexec.main()
@@ -790,7 +837,7 @@ def test_main_empty_if_exec(
     monkeypatch.setattr(
         git_rexec,
         "parse_args",
-        lambda: _make_args(directory=tmp_path, print=True, if_exec="   "),
+        lambda: _make_args(directories=[tmp_path], print=True, if_exec="   "),
     )
     with pytest.raises(SystemExit) as exc_info:
         git_rexec.main()
@@ -807,7 +854,9 @@ def test_main_if_exec_command_not_found(
     monkeypatch.setattr(
         git_rexec,
         "parse_args",
-        lambda: _make_args(directory=tmp_path, print=True, if_exec="missing_filter"),
+        lambda: _make_args(
+            directories=[tmp_path], print=True, if_exec="missing_filter"
+        ),
     )
     monkeypatch.setattr(git_rexec, "discover_repos", lambda *_a: {tmp_path})
     monkeypatch.setattr("shutil.which", lambda _cmd, **_kw: None)
@@ -826,7 +875,7 @@ def test_main_discover_repos_error(
     monkeypatch.setattr(
         git_rexec,
         "parse_args",
-        lambda: _make_args(directory=tmp_path, print=True),
+        lambda: _make_args(directories=[tmp_path], print=True),
     )
     monkeypatch.setattr(
         git_rexec,
@@ -848,7 +897,7 @@ def test_main_worker_failure(
     monkeypatch.setattr(
         git_rexec,
         "parse_args",
-        lambda: _make_args(directory=tmp_path, parallel=True, exec_cmd=["git"]),
+        lambda: _make_args(directories=[tmp_path], parallel=True, exec_cmd=["git"]),
     )
     monkeypatch.setattr("shutil.which", lambda _cmd, **_kw: "/usr/bin/git")
     monkeypatch.setattr(git_rexec, "discover_repos", lambda *_a: {tmp_path})
@@ -888,7 +937,7 @@ def test_main_print_modes(  # noqa: PLR0913, PLR0917
         git_rexec,
         "parse_args",
         lambda: _make_args(
-            directory=tmp_path,
+            directories=[tmp_path],
             print=print_flag,
             print0=print0_flag,
             if_exec="true",
@@ -917,7 +966,7 @@ def test_main_parallel_execution_with_error(
         git_rexec,
         "parse_args",
         lambda: _make_args(
-            directory=tmp_path, parallel=True, exec_cmd=["git", "status"]
+            directories=[tmp_path], parallel=True, exec_cmd=["git", "status"]
         ),
     )
     monkeypatch.setattr("shutil.which", lambda _cmd, **_kw: "/usr/bin/git")
@@ -961,7 +1010,10 @@ def test_main_foreground_execution(
         git_rexec,
         "parse_args",
         lambda: _make_args(
-            directory=tmp_path, parallel=False, quiet=False, exec_cmd=["git", "status"]
+            directories=[tmp_path],
+            parallel=False,
+            quiet=False,
+            exec_cmd=["git", "status"],
         ),
     )
     monkeypatch.setattr("shutil.which", lambda _cmd, **_kw: "/usr/bin/git")
