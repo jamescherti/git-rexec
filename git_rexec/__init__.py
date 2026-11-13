@@ -382,6 +382,8 @@ def git_find_repo(
         # and entry checks frequently raise exceptions that inherit from OSError. For
         # example, Permission Denied, Broken Links and Race Conditions, I/O errors...
         try:
+            # os.DirEntry provides efficient filesystem checks using cached metadata,
+            # avoiding unnecessary filesystem calls and Path object creation.
             with os.scandir(current_dir) as iter_scandir:
                 dirs_in_current: list[Path] = []
                 is_repo: bool = False
