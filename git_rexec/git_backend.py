@@ -19,7 +19,7 @@
 # You should have received a copy of the GNU General Public License along with
 # this program. If not, see <https://www.gnu.org/licenses/>.
 #
-"""Git backend."""
+"""Low-level Git plumbing operations."""
 
 from __future__ import annotations
 

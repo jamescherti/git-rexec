@@ -127,9 +127,7 @@ def mock_pygit2(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     fake_pygit2 = MagicMock()
     fake_pygit2.GitError = DummyGitError
     monkeypatch.setattr(git_rexec.git_backend, "HAS_PYGIT2", True)
-    monkeypatch.setattr(
-        git_rexec.git_backend, "pygit2", fake_pygit2, raising=False
-    )
+    monkeypatch.setattr(git_rexec.git_backend, "pygit2", fake_pygit2, raising=False)
     return fake_pygit2
 
 
@@ -410,7 +408,7 @@ def test_command_exists(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
 
 def test_run_command_get_output_empty(tmp_path: Path) -> None:
     """Return exit code 0 immediately when given an empty command list."""
-    res = git_rexec.run_command_get_output(tmp_path, [])
+    res = git_rexec.command_execution.run_command_get_output(tmp_path, [])
     assert res.returncode == 0
     assert res.command == []
 
@@ -424,7 +422,9 @@ def test_run_command_get_output_success(tmp_path: Path) -> None:
         patch("git_rexec.command_exists", return_value=True),
         patch("subprocess.run", return_value=mock_proc),
     ):
-        res = git_rexec.run_command_get_output(tmp_path, ["echo", "hi"])
+        res = git_rexec.command_execution.run_command_get_output(
+            tmp_path, ["echo", "hi"]
+        )
         assert res.returncode == 0
         assert res.stdout == "hi\n"
         assert res.stderr == ""
@@ -433,7 +433,9 @@ def test_run_command_get_output_success(tmp_path: Path) -> None:
 def test_run_command_get_output_file_not_found(tmp_path: Path) -> None:
     """Return 127 when command binary is not found."""
     with patch("git_rexec.command_exists", return_value=False):
-        res = git_rexec.run_command_get_output(tmp_path, ["missing_cmd"])
+        res = git_rexec.command_execution.run_command_get_output(
+            tmp_path, ["missing_cmd"]
+        )
         assert res.returncode == 127
         assert "Command not found: 'missing_cmd'" in res.stderr
 
@@ -441,10 +443,12 @@ def test_run_command_get_output_file_not_found(tmp_path: Path) -> None:
 def test_run_command_get_output_oserror(tmp_path: Path) -> None:
     """Return 126 when an OSError (like PermissionError) occurs."""
     with (
-        patch("git_rexec.command_exists", return_value=True),
+        patch("git_rexec.command_execution.command_exists", return_value=True),
         patch("subprocess.run", side_effect=PermissionError("Permission denied")),
     ):
-        res = git_rexec.run_command_get_output(tmp_path, ["./no_exec.sh"])
+        res = git_rexec.command_execution.run_command_get_output(
+            tmp_path, ["./no_exec.sh"]
+        )
         assert res.returncode == 126
         assert "Cannot execute './no_exec.sh'" in res.stderr
 
@@ -492,10 +496,12 @@ def test_format_parallel_output_normal_and_quiet(tmp_path: Path) -> None:
 def test_process_repo_filtered_out(tmp_path: Path) -> None:
     """Return None when the --if-exec filter command exits non-zero."""
     with patch(
-        "git_rexec.run_command_get_output",
+        "git_rexec.command_execution.run_command_get_output",
         return_value=git_rexec.CommandResult(["false"], returncode=1),
     ):
-        ctx = git_rexec.process_repo(tmp_path, ["git", "status"], ["false"])
+        ctx = git_rexec.command_execution.process_repo(
+            tmp_path, ["git", "status"], ["false"]
+        )
         assert ctx is None
 
 
@@ -505,8 +511,12 @@ def test_process_repo_filter_passes_and_executes(tmp_path: Path) -> None:
         git_rexec.CommandResult(["true"], returncode=0),
         git_rexec.CommandResult(["git", "status"], returncode=0, stdout="ok\n"),
     ]
-    with patch("git_rexec.run_command_get_output", side_effect=side_effects):
-        ctx = git_rexec.process_repo(tmp_path, ["git", "status"], ["true"])
+    with patch(
+        "git_rexec.command_execution.run_command_get_output", side_effect=side_effects
+    ):
+        ctx = git_rexec.command_execution.process_repo(
+            tmp_path, ["git", "status"], ["true"]
+        )
         assert ctx is not None
         assert ctx.path == tmp_path
         assert ctx.parallel_result is not None
@@ -515,7 +525,7 @@ def test_process_repo_filter_passes_and_executes(tmp_path: Path) -> None:
 
 def test_process_repo_no_commands(tmp_path: Path) -> None:
     """Return RepoContext with parallel_result=None when no commands are passed."""
-    ctx = git_rexec.process_repo(tmp_path, None, None)
+    ctx = git_rexec.command_execution.process_repo(tmp_path, None, None)
     assert ctx is not None
     assert ctx.parallel_result is None
 
@@ -607,7 +617,7 @@ def test_execute_parallel_tasks_success(tmp_path: Path) -> None:
     def fake_process(repo: Path, *_args: object) -> git_rexec.RepoContext:
         return git_rexec.RepoContext(path=repo)
 
-    with patch("git_rexec.process_repo", side_effect=fake_process):
+    with patch("git_rexec.command_execution.process_repo", side_effect=fake_process):
         results = git_rexec.execute_parallel_tasks({r2, r1}, None, None, max_workers=2)
 
     assert [result.path for result in results] == [r1, r2]
@@ -619,7 +629,7 @@ def test_execute_parallel_tasks_exception(tmp_path: Path, error: Exception) -> N
     repo = tmp_path / "repo"
 
     with (
-        patch("git_rexec.process_repo", side_effect=error),
+        patch("git_rexec.command_execution.process_repo", side_effect=error),
         pytest.raises(RuntimeError) as exc_info,
     ):
         git_rexec.execute_parallel_tasks({repo}, None, None, max_workers=2)
