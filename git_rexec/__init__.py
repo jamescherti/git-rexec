@@ -350,25 +350,18 @@ def git_find_repo(
         traversal.
     :return: A tuple containing standard repository paths and worktrees paths.
     """
-    # Filter out scan roots that are explicitly excluded or contain an ignore marker in
-    # their directory hierarchy, preventing unnecessary traversal.
-    resolved_roots = {
+    # Filter out scan roots that are explicitly excluded or contain an ignore
+    # marker in their directory hierarchy, preventing unnecessary traversal.
+    eligible_scan_roots: set[Path] = {
         directory
         for directory in resolved_roots
         if not is_excluded(directory, resolved_exclude_paths)
         and not is_ignored_directory(directory)
     }
 
-    # Remove overlapping scan roots by keeping only directories that are not descendants
-    # of another root, preventing redundant directory traversal.
-    dirs_to_visit: set[Path] = {
-        directory
-        for directory in resolved_roots
-        if not any(
-            directory != other and directory.is_relative_to(other)
-            for other in resolved_roots
-        )
-    }
+    # Preserve all eligible roots, including nested roots, while avoiding
+    # redundant traversal by skipping roots already scheduled for scanning.
+    dirs_to_visit: set[Path] = eligible_scan_roots.copy()
 
     git_repos: set[Path] = set()
     git_worktrees: set[Path] = set()
@@ -417,7 +410,7 @@ def git_find_repo(
                 if not is_repo and dirs_in_current:
                     # Append collected directories only if we are not inside a
                     # repository
-                    dirs_to_visit.extend(dirs_in_current)
+                    dirs_to_visit.update(dirs_in_current)
         except OSError:
             continue
 
