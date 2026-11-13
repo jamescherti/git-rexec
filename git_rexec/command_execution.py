@@ -28,6 +28,7 @@ import sys
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Event
 
 EXIT_COMMAND_NOT_FOUND: int = 127
 EXIT_CANNOT_EXECUTE: int = 126
@@ -132,22 +133,29 @@ def run_command_get_output(
 
 
 def process_repo(
-    repo_path: Path, exec_parallel_cmd: list[str] | None, if_exec_cmd: list[str] | None
+    repo_path: Path,
+    exec_parallel_cmd: list[str] | None,
+    if_exec_cmd: list[str] | None,
+    stop: Event | None = None,
 ) -> RepoContext | None:
     """Process a single repository: check conditions and run parallel commands.
 
     :param repo_path: The repository path.
     :param exec_parallel_cmd: Command list to execute in background/parallel.
     :param if_exec_cmd: Command list to check before processing (filter).
+    :param stop: Skip new work after a parallel action fails.
     :return: RepoContext if processed successfully, None if filtered out.
     """
+    if stop and stop.is_set():
+        return None
+
     # Filter: if-exec
     if if_exec_cmd:
         # We discard output for the filter check, only caring about exit code
         filter_res: CommandResult = run_command_get_output(
             repo_path, if_exec_cmd, capture=False
         )
-        if filter_res.returncode != 0:
+        if filter_res.returncode != 0 or (stop and stop.is_set()):
             return None
 
     # Action: exec-parallel
@@ -157,6 +165,9 @@ def process_repo(
             repo_path, exec_parallel_cmd, capture=True
         )
 
+        if stop and parallel_result.returncode:
+            stop.set()
+
     return RepoContext(path=repo_path, parallel_result=parallel_result)
 
 
@@ -165,6 +176,7 @@ def execute_parallel_tasks(
     exec_parallel: list[str] | None,
     if_exec: list[str] | None,
     max_workers: int,
+    exit_on_error: bool = False,
 ) -> list[RepoContext]:
     """Run discovery and parallel execution tasks.
 
@@ -172,6 +184,7 @@ def execute_parallel_tasks(
     :param exec_parallel: Command list for background execution.
     :param if_exec: Command list for conditional filtering.
     :param max_workers: Maximum number of threads for execution.
+    :param exit_on_error: Cancel queued tasks when a parallel action fails.
     :return: list of processed repository contexts.
     """
     if not repos:
@@ -179,14 +192,26 @@ def execute_parallel_tasks(
 
     results: list[RepoContext] = []
 
+    stop = Event() if exit_on_error and exec_parallel else None
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures: dict[Future[RepoContext | None], Path] = {
-            executor.submit(process_repo, repo, exec_parallel, if_exec): repo
-            for repo in repos
-        }
+        futures: dict[Future[RepoContext | None], Path] = {}
+        for repo in repos:
+            # A worker can fail while the main thread is still submitting tasks.
+            if stop and stop.is_set():
+                break
+            future = executor.submit(process_repo, repo, exec_parallel, if_exec, stop)
+            futures[future] = repo
 
-        for future in as_completed(futures):
-            repo_path: Path = futures[future]
+        if stop:
+            for _ in as_completed(futures):
+                if stop.is_set():
+                    executor.shutdown(wait=True, cancel_futures=True)
+                    break
+
+        for future, repo_path in futures.items():
+            if future.cancelled():
+                continue
+
             try:
                 result: RepoContext | None = future.result()
                 if result:

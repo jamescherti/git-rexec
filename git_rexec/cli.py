@@ -90,6 +90,12 @@ def parse_args() -> argparse.Namespace:
         default=False,
     )
     parser.add_argument(
+        "-e",
+        "--exit-on-error",
+        action="store_true",
+        help="Stop on the first command failure",
+    )
+    parser.add_argument(
         "-i",
         "--if-exec",
         type=str,
@@ -242,7 +248,8 @@ def _run() -> None:
     else:
         try:
             processed_repos = execute_parallel_tasks(
-                repos, exec_parallel_cmd, if_exec_cmd, args.max_workers
+                repos, exec_parallel_cmd, if_exec_cmd, args.max_workers,
+                args.exit_on_error,
             )
         except RuntimeError as err:
             print(err, file=sys.stderr)
@@ -306,6 +313,9 @@ def _run() -> None:
                     command=args.exec_cmd, returncode=EXIT_CANNOT_EXECUTE
                 )
                 execution_errors.append((repo_path, failed_res))
+
+            if args.exit_on_error and execution_errors:
+                break
 
         # If no commands were run, just list the repo
         if not args.exec_cmd:

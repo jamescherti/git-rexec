@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import builtins
 import importlib.util
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -440,10 +441,8 @@ def test_run_command_get_output_empty(tmp_path: Path) -> None:
 
 
 def test_run_command_get_output_success(tmp_path: Path) -> None:
-    """Capture stdout, stderr, and returncode from subprocess.run."""
-    mock_proc = subprocess.CompletedProcess(
-        args=["echo", "hi"], returncode=0, stdout="hi\n", stderr=""
-    )
+    """Capture stdout, stderr, and the child exit status."""
+    mock_proc = subprocess.CompletedProcess(["echo", "hi"], 0, "hi\n", "")
     with (
         patch("git_rexec.command_execution.command_exists", return_value=True),
         patch("subprocess.run", return_value=mock_proc),
@@ -776,6 +775,7 @@ def _make_args(**overrides: object) -> argparse.Namespace:
         "directories": None,
         "exclude_dir": [],
         "parallel": False,
+        "exit_on_error": False,
         "if_exec": None,
         "max_workers": 2,
         "quiet": False,
@@ -1301,3 +1301,105 @@ def test_discover_repos_skips_marked_source(tmp_path: Path) -> None:
     )
     backend.list_worktrees.assert_not_called()
     backend.list_submodules.assert_not_called()
+
+
+@pytest.mark.parametrize("parallel", [False, True])
+@pytest.mark.parametrize("option", [None, "-e", "--exit-on-error"])
+def test_exit_on_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, parallel: bool, option: str | None
+) -> None:
+    """Run exactly one failing command with either alias, or all by default."""
+    repos = {tmp_path / name for name in ("first", "second", "third")}
+    for repo in repos:
+        repo.mkdir()
+    monkeypatch.setattr(git_rexec.cli, "discover_repos", lambda *_args: repos)
+    flags = ["-p"] if parallel else []
+    if option:
+        flags.append(option)
+    script = "from pathlib import Path; Path('ran').touch(); raise SystemExit(7)"
+    argv = ["git-rexec", *flags, "-j", "1", "--", sys.executable, "-c", script]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    with pytest.raises(SystemExit) as status:
+        git_rexec.cli.command_line_interface()
+
+    assert status.value.code == 1
+    assert len(list(tmp_path.glob("*/ran"))) == (1 if option else 3)
+
+
+@pytest.mark.parametrize("flags", [[], ["-p"]])
+def test_exit_on_error_filter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flags: list[str]
+) -> None:
+    """Skip a rejected repository and run the successful action in the other."""
+    repos = {tmp_path / name for name in ("skip", "run")}
+    for repo in repos:
+        repo.mkdir()
+    monkeypatch.setattr(git_rexec.cli, "discover_repos", lambda *_args: repos)
+    predicate = "from pathlib import Path; raise SystemExit(Path.cwd().name == 'skip')"
+    check = shlex.join([sys.executable, "-c", predicate])
+    script = "from pathlib import Path; Path('ran').touch()"
+    argv = ["git-rexec", "-e", *flags, "-i", check, "--", sys.executable, "-c", script]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    with pytest.raises(SystemExit) as status:
+        git_rexec.cli.command_line_interface()
+
+    assert status.value.code == 0
+    assert list(tmp_path.glob("*/ran")) == [tmp_path / "run" / "ran"]
+
+
+def test_parallel_exit_on_error_waits_for_running_command(tmp_path: Path) -> None:
+    """Allow a running sibling to finish and collect its output."""
+    for name in ("slow", "fail"):
+        subprocess.run(["git", "init", "-q", str(tmp_path / name)], check=True)
+    script = """
+import time
+from pathlib import Path
+
+# Bound the child wait even if the other command never starts.
+def wait_for(marker: Path) -> None:
+    deadline = time.monotonic() + 5
+    while not marker.exists():
+        if time.monotonic() >= deadline:
+            raise SystemExit("Timed out waiting for " + str(marker))
+        time.sleep(0.02)
+
+ready = Path('../ready')
+if Path.cwd().name == 'slow':
+    ready.touch()
+    wait_for(Path("../failing"))
+    time.sleep(0.2)
+    print("finished action")
+else:
+    wait_for(ready)
+    Path('../failing').touch()
+    print('failed action')
+    raise SystemExit(9)
+"""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from git_rexec import command_line_interface; command_line_interface()",
+            "-C",
+            str(tmp_path),
+            "-pe",
+            "-j",
+            "2",
+            "--",
+            sys.executable,
+            "-c",
+            script,
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        timeout=8,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "    failed action\n" in result.stdout
+    assert f"{tmp_path / 'fail'}: errno 9" in result.stdout
+    assert f"{tmp_path / 'slow'}: errno" not in result.stdout
+    assert "    finished action\n" in result.stdout

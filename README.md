@@ -123,30 +123,42 @@ git-rexec [OPTIONS] -- [exec_cmd ...]
 ### Options
 
 ```
-usage: git-rexec [-h] [-C DIRECTORY] [--exclude-dir EXCLUDE_DIR] [-p] [-i IF_EXEC] [-j MAX_WORKERS] [-q] [-s] [--print] [--print0] [exec_cmd ...]
+usage: git-rexec [-h] [-C DIRECTORY] [--exclude-dir EXCLUDE_DIR] [-p] [-e]
+                 [-i IF_EXEC] [-j MAX_WORKERS] [-q] [-s] [--print] [--print0]
+                 [exec_cmd ...]
 
 Find Git repositories and execute commands against them in parallel.
 
 positional arguments:
-  exec_cmd              The command to execute. You can use -- to pass options.
+  exec_cmd              The command to execute. You can use -- to pass
+                        options.
 
 options:
   -h, --help            show this help message and exit
   -C, --directory DIRECTORY
-                        Root directory to search (defaults to current directory)
+                        Root directory to search (repeatable, defaults to the
+                        current directory)
   --exclude-dir EXCLUDE_DIR
-                        Exclude a specific directory and all of its subdirectories
+                        Exclude a specific directory and all of its
+                        subdirectories
   -p, --parallel        Execute the command in parallel using threads
+  -e, --exit-on-error   Stop on the first command failure
   -i, --if-exec IF_EXEC
-                        Execute commands only if this check returns exit code 0.
+                        Execute commands only if this check returns exit code
+                        0.
   -j, --jobs MAX_WORKERS
                         Maximum number of processors/workers to use
-  -q, --quiet           Quiet mode. Suppresses the informational log prefixes ([EXEC] and [EXEC-P]) that precede execution output.
+  -q, --quiet           Quiet mode. Suppresses the informational log prefixes
+                        ([EXEC] and [EXEC-P]) that precede execution output.
   -s, --include-sub-repos
-                        Include sub-repositories (e.g., Git worktrees and submodules)
+                        Include sub-repositories (e.g., Git worktrees and
+                        submodules)
   --print               Print the paths (only when no command is provided)
-  --print0              Separate the paths with a null character (only when no command is provided)
+  --print0              Separate the paths with a null character (only when no
+                        command is provided)
 ```
+
+For example, `git-rexec -e -- make test` stops at the first failing repository and exits with status 1. With `-p -e`, git-rexec cancels queued tasks and waits for running commands to finish. A nonzero `--if-exec` check simply skips that repository in either mode.
 
 ## Frequently Asked Questions
 
