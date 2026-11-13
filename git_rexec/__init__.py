@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
 #
-# Optional dependencies:
-#   - colorama
-#   - setproctitle
-#
 # Author: James Cherti
 # URL: https://github.com/jamescherti/git-rexec
 # Version: 1.1.2
@@ -25,9 +21,9 @@
 #
 """Find Git repositories and execute commands against them in parallel.
 
-This script allows for finding Git repositories within a directory structure
-and executing commands against them. It supports conditional filtering,
-background execution, and sequential foreground execution.
+This script allows for finding Git repositories within a directory structure and
+executing commands against them. It supports conditional filtering, background
+execution, and sequential foreground execution.
 """
 
 from __future__ import annotations
@@ -342,30 +338,25 @@ def is_ignored_directory(directory: Path) -> bool:
 
 
 def git_find_repo(
-    root: Path | Iterable[Path], exclude_paths: set[Path] | list[Path] | None = None
+    resolved_roots: Iterable[Path],
+    resolved_exclude_paths: set[Path] | list[Path] | None = None,
 ) -> tuple[set[Path], set[Path]]:
     """Recursively find all Git repositories under the supplied roots.
 
-    :param root: A directory or collection of directories to scan together.
-    :param exclude_paths: Directories to exclude to optimize traversal.
-    :return: A tuple containing standard repository paths and worktrees
-    paths.
+    :param resolved_roots: A collection of resolved directories to scan together.
+    :param resolved_exclude_paths: Resolved directories to exclude to optimize
+        traversal.
+    :return: A tuple containing standard repository paths and worktrees paths.
     """
     git_repos: set[Path] = set()
     git_worktrees: set[Path] = set()
 
-    # Resolve excluded paths once
-    resolved_excludes: set[Path] = (
-        {ex_path.resolve() for ex_path in exclude_paths} if exclude_paths else set()
-    )
-
-    roots = (root,) if isinstance(root, Path) else root
     dirs_to_visit: deque[Path] = deque()
     visited: set[Path] = set()
-    for directory in {path.resolve() for path in roots}:
-        if not is_excluded(directory, resolved_excludes) and not is_ignored_directory(
-            directory
-        ):
+    for directory in resolved_roots:
+        if not is_excluded(
+            directory, resolved_exclude_paths
+        ) and not is_ignored_directory(directory):
             dirs_to_visit.append(directory)
 
     while dirs_to_visit:
@@ -398,7 +389,7 @@ def git_find_repo(
                         elif entry.is_dir(follow_symlinks=False):
                             entry_path: Path = Path(entry.path)
                             if is_excluded(
-                                entry_path, resolved_excludes
+                                entry_path, resolved_exclude_paths
                             ) or has_ignore_marker(entry_path):
                                 # Excluded
                                 continue
@@ -599,18 +590,16 @@ def discover_repos(
     :param include_sub_repos: Whether to include sub-repositories.
     :return: A set of repository root paths.
     """
-    resolved_ex_dirs: set[Path] = (
-        {Path(ex_dir).resolve() for ex_dir in exclude_dirs} if exclude_dirs else set()
-    )
+    resolved_ex_dirs: set[Path] = {Path(ex_dir).resolve() for ex_dir in exclude_dirs}
 
     roots = (directories,) if isinstance(directories, Path) else directories
-    scan_roots: set[Path] = set()
+    resolved_scan_roots: set[Path] = set()
     for directory in {path.resolve() for path in roots}:
         if is_excluded(directory, resolved_ex_dirs) or is_ignored_directory(directory):
             continue
-        scan_roots.add(git_backend.toplevel(directory) or directory)
+        resolved_scan_roots.add(git_backend.toplevel(directory) or directory)
 
-    git_repos, git_worktrees = git_find_repo(scan_roots, resolved_ex_dirs)
+    git_repos, git_worktrees = git_find_repo(resolved_scan_roots, resolved_ex_dirs)
 
     # Extract and append sub-repositories concurrently if requested
     if include_sub_repos:

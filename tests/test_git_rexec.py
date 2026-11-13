@@ -247,7 +247,9 @@ def test_git_find_repo_standard_and_subrepos(tmp_path: Path) -> None:
     symlink_dir = tmp_path / "symlink_repo"
     symlink_dir.symlink_to(repo1, target_is_directory=True)
 
-    repos, sub_repos = git_rexec.git_find_repo(tmp_path, exclude_paths=[excluded])
+    repos, sub_repos = git_rexec.git_find_repo(
+        {tmp_path}, resolved_exclude_paths=[excluded]
+    )
 
     assert repos == {repo1.resolve()}
     assert sub_repos == {sub1.resolve()}
@@ -257,7 +259,7 @@ def test_git_find_repo_root_excluded(tmp_path: Path) -> None:
     """Return empty sets immediately if root itself is inside exclude_paths."""
     (tmp_path / "repo" / ".git").mkdir(parents=True)
     repos, sub_repos = git_rexec.git_find_repo(
-        tmp_path / "repo", exclude_paths=[tmp_path.resolve()]
+        {tmp_path / "repo"}, resolved_exclude_paths=[tmp_path.resolve()]
     )
     assert repos == set()
     assert sub_repos == set()
@@ -266,7 +268,7 @@ def test_git_find_repo_root_excluded(tmp_path: Path) -> None:
 def test_git_find_repo_oserror_scandir(tmp_path: Path) -> None:
     """Gracefully skip directories that raise OSError during os.scandir."""
     with patch("os.scandir", side_effect=PermissionError("Denied")):
-        repos, sub_repos = git_rexec.git_find_repo(tmp_path)
+        repos, sub_repos = git_rexec.git_find_repo({tmp_path})
         assert repos == set()
         assert sub_repos == set()
 
@@ -282,7 +284,7 @@ def test_git_find_repo_oserror_entry_is_dir(tmp_path: Path) -> None:
     mock_cm.__exit__.return_value = False
 
     with patch("os.scandir", return_value=mock_cm):
-        repos, sub_repos = git_rexec.git_find_repo(tmp_path)
+        repos, sub_repos = git_rexec.git_find_repo({tmp_path})
         assert repos == set()
         assert sub_repos == set()
 
@@ -1117,7 +1119,7 @@ def test_git_find_repo_marker_precedes_repository_detection(
         return context
 
     with patch.object(git_rexec.os, "scandir", side_effect=ordered_scandir):
-        assert git_rexec.git_find_repo(tmp_path) == (set(), set())
+        assert git_rexec.git_find_repo({tmp_path}) == (set(), set())
 
 
 def test_git_find_repo_prunes_marked_tree_only(tmp_path: Path) -> None:
@@ -1128,7 +1130,7 @@ def test_git_find_repo_prunes_marked_tree_only(tmp_path: Path) -> None:
     allowed = tmp_path / "allowed"
     (allowed / ".git").mkdir(parents=True)
 
-    assert git_rexec.git_find_repo(tmp_path) == ({allowed.resolve()}, set())
+    assert git_rexec.git_find_repo({tmp_path}) == ({allowed.resolve()}, set())
 
 
 @pytest.mark.parametrize("marker_location", ["root", "ancestor"])
@@ -1139,7 +1141,7 @@ def test_git_find_repo_marked_start(tmp_path: Path, marker_location: str) -> Non
     marker_parent = root if marker_location == "root" else tmp_path
     (marker_parent / ".git-rexec-ignore").touch()
 
-    assert git_rexec.git_find_repo(root) == (set(), set())
+    assert git_rexec.git_find_repo({root}) == (set(), set())
 
 
 @pytest.mark.parametrize("inside_repository", [False, True])
