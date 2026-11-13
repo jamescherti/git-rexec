@@ -342,16 +342,17 @@ def git_find_repo(
 ) -> tuple[set[Path], set[Path]]:
     """Recursively find all Git repositories under the supplied roots.
 
-    Overlapping scan roots are consolidated to avoid scanning the same
-    directory tree multiple times.
+    Overlapping scan roots are handled without scanning the same directory
+    multiple times. Explicitly supplied nested roots are preserved even
+    when their parent directories are Git repositories.
 
     :param resolved_roots: A collection of resolved directories to scan together.
     :param resolved_exclude_paths: Resolved directories to exclude to optimize
         traversal.
     :return: A tuple containing standard repository paths and worktrees paths.
     """
-    # Filter out scan roots that are explicitly excluded or contain an ignore
-    # marker in their directory hierarchy, preventing unnecessary traversal.
+    # Filter out scan roots that are explicitly excluded or contain an ignore marker in
+    # their directory hierarchy, preventing unnecessary traversal.
     eligible_scan_roots: set[Path] = {
         directory
         for directory in resolved_roots
@@ -359,8 +360,8 @@ def git_find_repo(
         and not is_ignored_directory(directory)
     }
 
-    # Preserve all eligible roots, including nested roots, while avoiding
-    # redundant traversal by skipping roots already scheduled for scanning.
+    # Preserve explicitly supplied roots, including nested roots, while preventing their
+    # discovery through parent roots from causing duplicate directory scans.
     dirs_to_visit: set[Path] = eligible_scan_roots.copy()
 
     git_repos: set[Path] = set()
@@ -397,10 +398,15 @@ def git_find_repo(
                         # Add the directory to dirs_in_current to scan it recursively
                         elif entry.is_dir(follow_symlinks=False):
                             entry_path: Path = Path(entry.path)
-                            if is_excluded(
-                                entry_path, resolved_exclude_paths
-                            ) or has_ignore_marker(entry_path):
-                                # Excluded
+                            # Skip excluded or ignored directories, as well as
+                            # explicitly supplied scan roots that are already scheduled,
+                            # to prevent redundant directory scans.
+                            if (
+                                entry_path in eligible_scan_roots
+                                or is_excluded(entry_path, resolved_exclude_paths)
+                                or has_ignore_marker(entry_path)
+                            ):
+                                # Excluded or already scheduled as a scan root
                                 continue
 
                             dirs_in_current.append(entry_path)
