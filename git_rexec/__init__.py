@@ -35,7 +35,6 @@ import shutil
 import subprocess
 import sys
 import textwrap
-from collections import deque
 from collections.abc import Iterable
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -362,20 +361,20 @@ def git_find_repo(
 
     # Remove overlapping scan roots by keeping only directories that are not descendants
     # of another root, preventing redundant directory traversal.
-    dirs_to_visit: deque[Path] = deque(
+    dirs_to_visit: set[Path] = {
         directory
         for directory in resolved_roots
         if not any(
             directory != other and directory.is_relative_to(other)
             for other in resolved_roots
         )
-    )
+    }
 
     git_repos: set[Path] = set()
     git_worktrees: set[Path] = set()
 
     while dirs_to_visit:
-        current_dir: Path = dirs_to_visit.popleft()
+        current_dir: Path = dirs_to_visit.pop()
 
         # Try and OSError It protects your script from crashing mid-execution when
         # encountering common filesystem issues. In a directory scanner, os.scandir()
