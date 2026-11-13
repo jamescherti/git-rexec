@@ -343,20 +343,37 @@ def git_find_repo(
 ) -> tuple[set[Path], set[Path]]:
     """Recursively find all Git repositories under the supplied roots.
 
+    Overlapping scan roots are consolidated to avoid scanning the same
+    directory tree multiple times.
+
     :param resolved_roots: A collection of resolved directories to scan together.
     :param resolved_exclude_paths: Resolved directories to exclude to optimize
         traversal.
     :return: A tuple containing standard repository paths and worktrees paths.
     """
-    dirs_to_visit: deque[Path] = deque()
-    for directory in set(resolved_roots):
-        if not is_excluded(
-            directory, resolved_exclude_paths
-        ) and not is_ignored_directory(directory):
-            dirs_to_visit.append(directory)
+    # Filter out scan roots that are explicitly excluded or contain an ignore marker in
+    # their directory hierarchy, preventing unnecessary traversal.
+    resolved_roots = {
+        directory
+        for directory in resolved_roots
+        if not is_excluded(directory, resolved_exclude_paths)
+        and not is_ignored_directory(directory)
+    }
+
+    # Remove overlapping scan roots by keeping only directories that are not descendants
+    # of another root, preventing redundant directory traversal.
+    dirs_to_visit: deque[Path] = deque(
+        directory
+        for directory in resolved_roots
+        if not any(
+            directory != other and directory.is_relative_to(other)
+            for other in resolved_roots
+        )
+    )
 
     git_repos: set[Path] = set()
     git_worktrees: set[Path] = set()
+
     while dirs_to_visit:
         current_dir: Path = dirs_to_visit.popleft()
 
