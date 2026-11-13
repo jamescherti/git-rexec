@@ -58,18 +58,15 @@ def test_optional_imports_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
 
-    # Inject the module into sys.modules so @dataclass can resolve type hints
-    monkeypatch.setitem(sys.modules, "git_rexec_no_deps", mod)
+    with patch.dict(sys.modules, {spec.name: mod}):
+        spec.loader.exec_module(mod)
 
-    spec.loader.exec_module(mod)
-
-    assert mod.HAS_COLORAMA is False
-    assert getattr(mod, "HAS_SETPROCTITLE", False) is False
-    # TODO
-    # assert getattr(mod, "HAS_PYGIT2", False) is False
-    assert mod.Fore.YELLOW == ""
-    assert mod.Fore.RED == ""
-    assert mod.Fore.RESET == ""
+        assert mod.colors.HAS_COLORAMA is False
+        assert mod.cli.HAS_SETPROCTITLE is False
+        assert mod.git_backend.HAS_PYGIT2 is False
+        assert mod.colors.Fore.YELLOW == ""
+        assert mod.colors.Fore.RED == ""
+        assert mod.colors.Fore.RESET == ""
 
 
 # ---------------------------------------------------------------------------
@@ -80,12 +77,12 @@ def test_optional_imports_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_git_backend_invalid() -> None:
     """Raise ValueError when an unsupported backend is requested."""
     with pytest.raises(ValueError, match="Unsupported Git backend: libgit"):
-        git_rexec.GitBackend(backend="libgit")
+        git_rexec.git_backend.GitBackend(backend="libgit")
 
 
 def test_git_toplevel_success(tmp_path: Path) -> None:
     """Return resolved Path when git rev-parse succeeds."""
-    backend = git_rexec.GitBackend(backend="git")
+    backend = git_rexec.git_backend.GitBackend(backend="git")
     mock_proc = subprocess.CompletedProcess(
         args=[], returncode=0, stdout=f"{tmp_path}\n", stderr=""
     )
@@ -105,7 +102,7 @@ def test_git_toplevel_success(tmp_path: Path) -> None:
 )
 def test_git_toplevel_failure(tmp_path: Path, exc: Exception) -> None:
     """Return None when git rev-parse fails or raises OSError."""
-    backend = git_rexec.GitBackend(backend="git")
+    backend = git_rexec.git_backend.GitBackend(backend="git")
     with patch("subprocess.run", side_effect=exc):
         assert backend.toplevel(tmp_path) is None
 
@@ -135,36 +132,38 @@ def test_git_backend_pygit2_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     """Raise ValueError if pygit2 is requested but not available."""
     monkeypatch.setattr(git_rexec.git_backend, "HAS_PYGIT2", False)
     with pytest.raises(ValueError):
-        git_rexec.GitBackend(backend="pygit2")
+        git_rexec.git_backend.GitBackend(backend="pygit2")
 
 
 def test_git_toplevel_pygit2_success(tmp_path: Path, mock_pygit2: MagicMock) -> None:
     """Return resolved Path when pygit2 successfully discovers a repository."""
-    mock_pygit2.discover_repository.return_value = str(tmp_path / ".git")
+    mock_pygit2.git_discovery.discover_repository.return_value = str(tmp_path / ".git")
     mock_repo = MagicMock()
     mock_repo.is_bare = False
     mock_repo.workdir = str(tmp_path)
     mock_pygit2.Repository.return_value = mock_repo
 
-    backend = git_rexec.GitBackend(backend="pygit2")
+    backend = git_rexec.git_backend.GitBackend(backend="pygit2")
     result = backend.toplevel(tmp_path)
     assert result == tmp_path.resolve()
 
 
 def test_git_toplevel_pygit2_not_found(tmp_path: Path, mock_pygit2: MagicMock) -> None:
     """Return None when pygit2 fails to discover a repository."""
-    mock_pygit2.discover_repository.return_value = None
+    mock_pygit2.git_discovery.discover_repository.return_value = None
 
-    backend = git_rexec.GitBackend(backend="pygit2")
+    backend = git_rexec.git_backend.GitBackend(backend="pygit2")
     result = backend.toplevel(tmp_path)
     assert result is None
 
 
 def test_git_toplevel_pygit2_exception(tmp_path: Path, mock_pygit2: MagicMock) -> None:
     """Return None when pygit2 raises a GitError."""
-    mock_pygit2.discover_repository.side_effect = DummyGitError("Not a repo")
+    mock_pygit2.git_discovery.discover_repository.side_effect = DummyGitError(
+        "Not a repo"
+    )
 
-    backend = git_rexec.GitBackend(backend="pygit2")
+    backend = git_rexec.git_backend.GitBackend(backend="pygit2")
     result = backend.toplevel(tmp_path)
     assert result is None
 
@@ -181,7 +180,7 @@ def test_list_worktrees_pygit2(tmp_path: Path, mock_pygit2: MagicMock) -> None:
     mock_repo.lookup_worktree.return_value = mock_wt
     mock_pygit2.Repository.return_value = mock_repo
 
-    backend = git_rexec.GitBackend(backend="pygit2")
+    backend = git_rexec.git_backend.GitBackend(backend="pygit2")
     result = backend.list_worktrees(tmp_path)
     assert result == {tmp_path.resolve(), (tmp_path / "wt1").resolve()}
 
@@ -198,7 +197,7 @@ def test_list_submodules_pygit2(tmp_path: Path, mock_pygit2: MagicMock) -> None:
     mock_repo.lookup_submodule.return_value = mock_sm
     mock_pygit2.Repository.return_value = mock_repo
 
-    backend = git_rexec.GitBackend(backend="pygit2")
+    backend = git_rexec.git_backend.GitBackend(backend="pygit2")
     result = backend.list_submodules(tmp_path)
     assert result == {(tmp_path / "sm1").resolve()}
 
@@ -217,7 +216,7 @@ def test_list_submodules_pygit2_fallback(
     mock_repo.submodules = [mock_sm]
     mock_pygit2.Repository.return_value = mock_repo
 
-    backend = git_rexec.GitBackend(backend="pygit2")
+    backend = git_rexec.git_backend.GitBackend(backend="pygit2")
     result = backend.list_submodules(tmp_path)
     assert result == {(tmp_path / "sm1").resolve()}
 
@@ -248,7 +247,7 @@ def test_git_find_repo_standard_and_subrepos(tmp_path: Path) -> None:
     symlink_dir = tmp_path / "symlink_repo"
     symlink_dir.symlink_to(repo1, target_is_directory=True)
 
-    repos, sub_repos = git_rexec.git_find_repo(
+    repos, sub_repos = git_rexec.git_discovery.git_find_repo(
         {tmp_path}, resolved_exclude_paths=[excluded]
     )
 
@@ -259,7 +258,7 @@ def test_git_find_repo_standard_and_subrepos(tmp_path: Path) -> None:
 def test_git_find_repo_root_excluded(tmp_path: Path) -> None:
     """Return empty sets immediately if root itself is inside exclude_paths."""
     (tmp_path / "repo" / ".git").mkdir(parents=True)
-    repos, sub_repos = git_rexec.git_find_repo(
+    repos, sub_repos = git_rexec.git_discovery.git_find_repo(
         {tmp_path / "repo"}, resolved_exclude_paths=[tmp_path.resolve()]
     )
     assert repos == set()
@@ -269,7 +268,7 @@ def test_git_find_repo_root_excluded(tmp_path: Path) -> None:
 def test_git_find_repo_oserror_scandir(tmp_path: Path) -> None:
     """Gracefully skip directories that raise OSError during os.scandir."""
     with patch("os.scandir", side_effect=PermissionError("Denied")):
-        repos, sub_repos = git_rexec.git_find_repo({tmp_path})
+        repos, sub_repos = git_rexec.git_discovery.git_find_repo({tmp_path})
         assert repos == set()
         assert sub_repos == set()
 
@@ -285,7 +284,7 @@ def test_git_find_repo_oserror_entry_is_dir(tmp_path: Path) -> None:
     mock_cm.__exit__.return_value = False
 
     with patch("os.scandir", return_value=mock_cm):
-        repos, sub_repos = git_rexec.git_find_repo({tmp_path})
+        repos, sub_repos = git_rexec.git_discovery.git_find_repo({tmp_path})
         assert repos == set()
         assert sub_repos == set()
 
@@ -297,7 +296,7 @@ def test_git_find_repo_oserror_entry_is_dir(tmp_path: Path) -> None:
 
 def test_get_sub_repos_worktrees(tmp_path: Path) -> None:
     """Parse worktrees (including bare & trailing blocks) when .git is a file."""
-    backend = git_rexec.GitBackend(backend="git")
+    backend = git_rexec.git_backend.GitBackend(backend="git")
     worktree_repo = (tmp_path / "worktree_repo").resolve()
     wt1 = (tmp_path / "wt1").resolve()
     wt2 = (tmp_path / "wt2").resolve()
@@ -329,13 +328,13 @@ def test_get_sub_repos_worktrees(tmp_path: Path) -> None:
         args=[], returncode=0, stdout=porcelain_output, stderr=""
     )
     with patch("subprocess.run", return_value=mock_proc):
-        result = git_rexec.get_sub_repos(backend, worktree_repo)
+        result = git_rexec.git_discovery.get_sub_repos(backend, worktree_repo)
         assert result == {wt1, wt2}
 
 
 def test_get_sub_repos_submodules(tmp_path: Path) -> None:
     """Parse submodules when .gitmodules is a file."""
-    backend = git_rexec.GitBackend(backend="git")
+    backend = git_rexec.git_backend.GitBackend(backend="git")
     main_repo = (tmp_path / "main").resolve()
     sm1 = (tmp_path / "sm1").resolve()
     sm_excl = (tmp_path / "excluded" / "sm_excl").resolve()
@@ -352,7 +351,7 @@ def test_get_sub_repos_submodules(tmp_path: Path) -> None:
         args=[], returncode=0, stdout=submodule_output, stderr=""
     )
     with patch("subprocess.run", return_value=mock_proc):
-        result = git_rexec.get_sub_repos(
+        result = git_rexec.git_discovery.get_sub_repos(
             backend,
             main_repo,
             resolved_exclude_paths=[(tmp_path / "excluded").resolve()],
@@ -362,10 +361,12 @@ def test_get_sub_repos_submodules(tmp_path: Path) -> None:
 
 def test_get_sub_repos_none(tmp_path: Path) -> None:
     """Return empty set when Git reports no other worktrees or submodules."""
-    backend = git_rexec.GitBackend(backend="git")
+    backend = git_rexec.git_backend.GitBackend(backend="git")
     mock_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
     with patch("subprocess.run", return_value=mock_proc):
-        assert git_rexec.get_sub_repos(backend, tmp_path.resolve()) == set()
+        assert (
+            git_rexec.git_discovery.get_sub_repos(backend, tmp_path.resolve()) == set()
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -375,8 +376,11 @@ def test_get_sub_repos_none(tmp_path: Path) -> None:
 
 def test_command_exists(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Check command availability across cwd=None, relative paths, and PATH."""
-    assert git_rexec.command_exists("") is False
-    assert git_rexec.command_exists("git", cwd=tmp_path / "nonexistent") is False
+    assert git_rexec.command_execution.command_exists("") is False
+    assert (
+        git_rexec.command_execution.command_exists("git", cwd=tmp_path / "nonexistent")
+        is False
+    )
 
     script = tmp_path / "local_script.sh"
     script.touch(mode=0o755)
@@ -388,22 +392,44 @@ def test_command_exists(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
 
     # cwd is None
     monkeypatch.chdir(tmp_path)
-    assert git_rexec.command_exists("git", cwd=None) is True
-    assert git_rexec.command_exists("missing-binary", cwd=None) is False
-    assert git_rexec.command_exists("./local_script.sh", cwd=None) is True
-    assert git_rexec.command_exists("./missing_script.sh", cwd=None) is False
+    assert git_rexec.command_execution.command_exists("git", cwd=None) is True
+    assert (
+        git_rexec.command_execution.command_exists("missing-binary", cwd=None) is False
+    )
+    assert (
+        git_rexec.command_execution.command_exists("./local_script.sh", cwd=None)
+        is True
+    )
+    assert (
+        git_rexec.command_execution.command_exists("./missing_script.sh", cwd=None)
+        is False
+    )
 
     # cwd is provided with relative path containing separator
-    assert git_rexec.command_exists("./missing_script.sh", cwd=tmp_path) is False
-    assert git_rexec.command_exists("./local_script.sh", cwd=tmp_path) is True
+    assert (
+        git_rexec.command_execution.command_exists("./missing_script.sh", cwd=tmp_path)
+        is False
+    )
+    assert (
+        git_rexec.command_execution.command_exists("./local_script.sh", cwd=tmp_path)
+        is True
+    )
 
     # Absolute path
-    assert git_rexec.command_exists(str(script), cwd=tmp_path) is True
-    assert git_rexec.command_exists(str(tmp_path / "missing.sh"), cwd=tmp_path) is False
+    assert git_rexec.command_execution.command_exists(str(script), cwd=tmp_path) is True
+    assert (
+        git_rexec.command_execution.command_exists(
+            str(tmp_path / "missing.sh"), cwd=tmp_path
+        )
+        is False
+    )
 
     # cwd is provided with standard binary name
-    assert git_rexec.command_exists("git", cwd=tmp_path) is True
-    assert git_rexec.command_exists("missing-binary", cwd=tmp_path) is False
+    assert git_rexec.command_execution.command_exists("git", cwd=tmp_path) is True
+    assert (
+        git_rexec.command_execution.command_exists("missing-binary", cwd=tmp_path)
+        is False
+    )
 
 
 def test_run_command_get_output_empty(tmp_path: Path) -> None:
@@ -419,7 +445,7 @@ def test_run_command_get_output_success(tmp_path: Path) -> None:
         args=["echo", "hi"], returncode=0, stdout="hi\n", stderr=""
     )
     with (
-        patch("git_rexec.command_exists", return_value=True),
+        patch("git_rexec.command_execution.command_exists", return_value=True),
         patch("subprocess.run", return_value=mock_proc),
     ):
         res = git_rexec.command_execution.run_command_get_output(
@@ -432,7 +458,7 @@ def test_run_command_get_output_success(tmp_path: Path) -> None:
 
 def test_run_command_get_output_file_not_found(tmp_path: Path) -> None:
     """Return 127 when command binary is not found."""
-    with patch("git_rexec.command_exists", return_value=False):
+    with patch("git_rexec.command_execution.command_exists", return_value=False):
         res = git_rexec.command_execution.run_command_get_output(
             tmp_path, ["missing_cmd"]
         )
@@ -460,30 +486,34 @@ def test_run_command_get_output_oserror(tmp_path: Path) -> None:
 
 def test_format_parallel_output_empty_success(tmp_path: Path) -> None:
     """Return empty string when command succeeds with no output."""
-    res = git_rexec.CommandResult(command=["git", "status"], returncode=0)
-    assert git_rexec.format_parallel_output(tmp_path, res) == ""
+    res = git_rexec.command_execution.CommandResult(
+        command=["git", "status"], returncode=0
+    )
+    assert git_rexec.git_discovery.format_parallel_output(tmp_path, res) == ""
 
 
 def test_format_parallel_output_empty_failure(tmp_path: Path) -> None:
     """Return header even when output is empty if returncode is non-zero."""
-    res = git_rexec.CommandResult(command=["git", "status"], returncode=1)
-    out = git_rexec.format_parallel_output(tmp_path, res, quiet=False)
+    res = git_rexec.command_execution.CommandResult(
+        command=["git", "status"], returncode=1
+    )
+    out = git_rexec.git_discovery.format_parallel_output(tmp_path, res, quiet=False)
     assert f"[EXEC-P] {tmp_path}: git status" in out
 
 
 def test_format_parallel_output_normal_and_quiet(tmp_path: Path) -> None:
     """Format indentation normally and preserve original output in quiet mode."""
-    res = git_rexec.CommandResult(
+    res = git_rexec.command_execution.CommandResult(
         command=["printf", "a\tb"],
         returncode=0,
         stdout="col1\tcol2\n",
         stderr="err\n",
     )
-    normal = git_rexec.format_parallel_output(tmp_path, res, quiet=False)
+    normal = git_rexec.git_discovery.format_parallel_output(tmp_path, res, quiet=False)
     assert f"[EXEC-P] {tmp_path}: printf" in normal
     assert "    col1    col2\n    err\n" in normal
 
-    quiet = git_rexec.format_parallel_output(tmp_path, res, quiet=True)
+    quiet = git_rexec.git_discovery.format_parallel_output(tmp_path, res, quiet=True)
     assert "[EXEC-P]" not in quiet
     assert quiet == "col1\tcol2\nerr\n"
 
@@ -497,7 +527,7 @@ def test_process_repo_filtered_out(tmp_path: Path) -> None:
     """Return None when the --if-exec filter command exits non-zero."""
     with patch(
         "git_rexec.command_execution.run_command_get_output",
-        return_value=git_rexec.CommandResult(["false"], returncode=1),
+        return_value=git_rexec.command_execution.CommandResult(["false"], returncode=1),
     ):
         ctx = git_rexec.command_execution.process_repo(
             tmp_path, ["git", "status"], ["false"]
@@ -508,8 +538,10 @@ def test_process_repo_filtered_out(tmp_path: Path) -> None:
 def test_process_repo_filter_passes_and_executes(tmp_path: Path) -> None:
     """Run parallel command when --if-exec succeeds."""
     side_effects = [
-        git_rexec.CommandResult(["true"], returncode=0),
-        git_rexec.CommandResult(["git", "status"], returncode=0, stdout="ok\n"),
+        git_rexec.command_execution.CommandResult(["true"], returncode=0),
+        git_rexec.command_execution.CommandResult(
+            ["git", "status"], returncode=0, stdout="ok\n"
+        ),
     ]
     with patch(
         "git_rexec.command_execution.run_command_get_output", side_effect=side_effects
@@ -539,7 +571,7 @@ def test_discover_repos_from_toplevel_with_subrepos_and_excludes(
     tmp_path: Path,
 ) -> None:
     """Discover top-level repo, fetch sub-repos, and filter excluded paths."""
-    backend = git_rexec.GitBackend(backend="git")
+    backend = git_rexec.git_backend.GitBackend(backend="git")
     top = tmp_path / "top"
     sub_keep = tmp_path / "top" / "sub_keep"
     sub_excl = tmp_path / "top" / "excluded" / "sub_excl"
@@ -553,7 +585,7 @@ def test_discover_repos_from_toplevel_with_subrepos_and_excludes(
         patch.object(backend, "toplevel", return_value=top),
         patch.object(backend, "list_submodules", return_value={sub_keep, sub_excl}),
     ):
-        repos = git_rexec.discover_repos(
+        repos = git_rexec.git_discovery.discover_repos(
             git_backend=backend,
             directories=[top],
             max_workers=2,
@@ -565,7 +597,7 @@ def test_discover_repos_from_toplevel_with_subrepos_and_excludes(
 
 def test_discover_repos_via_find_repo_no_excludes(tmp_path: Path) -> None:
     """Fallback to git_find_repo when directory is not inside a single git repo."""
-    backend = git_rexec.GitBackend(backend="git")
+    backend = git_rexec.git_backend.GitBackend(backend="git")
     r1 = tmp_path / "r1"
     wt1 = tmp_path / "wt1"
     r1.mkdir()
@@ -573,10 +605,10 @@ def test_discover_repos_via_find_repo_no_excludes(tmp_path: Path) -> None:
 
     with (
         patch.object(backend, "toplevel", return_value=None),
-        patch("git_rexec.git_find_repo", return_value=({r1}, {wt1})),
-        patch("git_rexec.get_sub_repos", return_value={wt1}),
+        patch("git_rexec.git_discovery.git_find_repo", return_value=({r1}, {wt1})),
+        patch("git_rexec.git_discovery.get_sub_repos", return_value={wt1}),
     ):
-        repos = git_rexec.discover_repos(
+        repos = git_rexec.git_discovery.discover_repos(
             git_backend=backend,
             directories=[tmp_path],
             max_workers=1,
@@ -588,8 +620,8 @@ def test_discover_repos_via_find_repo_no_excludes(tmp_path: Path) -> None:
 
 def test_discover_repos_root_excluded(tmp_path: Path) -> None:
     """Return empty set immediately if root directory itself is excluded."""
-    backend = git_rexec.GitBackend(backend="git")
-    repos = git_rexec.discover_repos(
+    backend = git_rexec.git_backend.GitBackend(backend="git")
+    repos = git_rexec.git_discovery.discover_repos(
         git_backend=backend,
         directories=[tmp_path],
         max_workers=1,
@@ -606,7 +638,12 @@ def test_discover_repos_root_excluded(tmp_path: Path) -> None:
 
 def test_execute_parallel_tasks_empty() -> None:
     """Return empty list immediately when repos set is empty."""
-    assert git_rexec.execute_parallel_tasks(set(), None, None, max_workers=1) == []
+    assert (
+        git_rexec.command_execution.execute_parallel_tasks(
+            set(), None, None, max_workers=1
+        )
+        == []
+    )
 
 
 def test_execute_parallel_tasks_success(tmp_path: Path) -> None:
@@ -614,11 +651,15 @@ def test_execute_parallel_tasks_success(tmp_path: Path) -> None:
     r1 = tmp_path / "r1"
     r2 = tmp_path / "r2"
 
-    def fake_process(repo: Path, *_args: object) -> git_rexec.RepoContext:
-        return git_rexec.RepoContext(path=repo)
+    def fake_process(
+        repo: Path, *_args: object
+    ) -> git_rexec.command_execution.RepoContext:
+        return git_rexec.command_execution.RepoContext(path=repo)
 
     with patch("git_rexec.command_execution.process_repo", side_effect=fake_process):
-        results = git_rexec.execute_parallel_tasks({r2, r1}, None, None, max_workers=2)
+        results = git_rexec.command_execution.execute_parallel_tasks(
+            {r2, r1}, None, None, max_workers=2
+        )
 
     assert [result.path for result in results] == [r1, r2]
 
@@ -632,7 +673,9 @@ def test_execute_parallel_tasks_exception(tmp_path: Path, error: Exception) -> N
         patch("git_rexec.command_execution.process_repo", side_effect=error),
         pytest.raises(RuntimeError) as exc_info,
     ):
-        git_rexec.execute_parallel_tasks({repo}, None, None, max_workers=2)
+        git_rexec.command_execution.execute_parallel_tasks(
+            {repo}, None, None, max_workers=2
+        )
 
     assert str(exc_info.value) == f"Error processing repository {repo}: {error}"
     assert exc_info.value.__cause__ is error
@@ -669,7 +712,7 @@ def test_parse_args_valid(monkeypatch: pytest.MonkeyPatch) -> None:
             "fetch",
         ],
     )
-    args = git_rexec.parse_args()
+    args = git_rexec.cli.parse_args()
     assert args.directories == [Path("/tmp"), Path("projects")]
     assert args.exclude_dir == ["vendor"]
     assert args.parallel is True
@@ -684,7 +727,7 @@ def test_parse_args_valid(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_parse_args_jobs_zero_becomes_one(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ensure passing -j 0 sets max_workers to 1 due to lambda max(1, int(x))."""
     monkeypatch.setattr(sys, "argv", ["git-rexec", "-j", "0", "--print"])
-    args = git_rexec.parse_args()
+    args = git_rexec.cli.parse_args()
     assert args.max_workers == 1
 
 
@@ -692,7 +735,7 @@ def test_parse_args_invalid_jobs_type(monkeypatch: pytest.MonkeyPatch) -> None:
     """Exit with error when --jobs is not an integer string."""
     monkeypatch.setattr(sys, "argv", ["git-rexec", "-j", "foo", "--print"])
     with pytest.raises(SystemExit) as exc_info:
-        git_rexec.parse_args()
+        git_rexec.cli.parse_args()
     assert exc_info.value.code == 2
 
 
@@ -700,14 +743,23 @@ def test_print_error_summary(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Return 0 for no errors, or print details and return 1 when errors exist."""
-    assert git_rexec.print_error_summary([]) == 0
+    assert git_rexec.cli.print_error_summary([]) == 0
 
     errors = [
-        (tmp_path / "r1", git_rexec.CommandResult(["missing"], returncode=127)),
-        (tmp_path / "r2", git_rexec.CommandResult(["git", "pull"], returncode=2)),
-        (tmp_path / "r3", git_rexec.CommandResult(["ok"], returncode=0)),
+        (
+            tmp_path / "r1",
+            git_rexec.command_execution.CommandResult(["missing"], returncode=127),
+        ),
+        (
+            tmp_path / "r2",
+            git_rexec.command_execution.CommandResult(["git", "pull"], returncode=2),
+        ),
+        (
+            tmp_path / "r3",
+            git_rexec.command_execution.CommandResult(["ok"], returncode=0),
+        ),
     ]
-    rc = git_rexec.print_error_summary(errors)
+    rc = git_rexec.cli.print_error_summary(errors)
     assert rc == 1
     out = capsys.readouterr().out
     assert "Command not found: missing" in out
@@ -740,9 +792,9 @@ def test_main_nothing_to_do(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Exit with code 2 when no action flags or commands are given."""
-    monkeypatch.setattr(git_rexec, "parse_args", _make_args)
+    monkeypatch.setattr(git_rexec.cli, "parse_args", _make_args)
     with pytest.raises(SystemExit) as exc_info:
-        git_rexec.main()
+        git_rexec.cli.command_line_interface()
     assert exc_info.value.code == 2
     assert "Nothing to do." in capsys.readouterr().err
 
@@ -769,14 +821,20 @@ def test_main_shared_scan(
         sys, "argv", ["git-rexec", *(options if explicit_roots else []), "--print"]
     )
     with (
-        patch.object(git_rexec.GitBackend, "toplevel", return_value=None),
+        patch.object(git_rexec.git_backend.GitBackend, "toplevel", return_value=None),
         patch.object(
-            git_rexec, "discover_repos", wraps=git_rexec.discover_repos
+            git_rexec.cli,
+            "discover_repos",
+            wraps=git_rexec.git_discovery.discover_repos,
         ) as discover,
-        patch.object(git_rexec.os, "scandir", wraps=git_rexec.os.scandir) as scan,
+        patch.object(
+            git_rexec.git_discovery.os,
+            "scandir",
+            wraps=git_rexec.git_discovery.os.scandir,
+        ) as scan,
         pytest.raises(SystemExit) as status,
     ):
-        git_rexec.main()
+        git_rexec.cli.command_line_interface()
 
     assert status.value.code == 0
     discover.assert_called_once()
@@ -795,12 +853,12 @@ def test_main_missing_directory(
     """Exit with code 1 when -C directory does not exist."""
     bad_dir = tmp_path / "does_not_exist"
     monkeypatch.setattr(
-        git_rexec,
+        git_rexec.cli,
         "parse_args",
         lambda: _make_args(directories=[tmp_path, bad_dir], print=True),
     )
     with pytest.raises(SystemExit) as exc_info:
-        git_rexec.main()
+        git_rexec.cli.command_line_interface()
     assert exc_info.value.code == 1
     assert "Directory not found" in capsys.readouterr().err
 
@@ -812,14 +870,14 @@ def test_main_command_not_found(
 ) -> None:
     """Exit with 1 and print error summary when exec_cmd binary is not in PATH."""
     monkeypatch.setattr(
-        git_rexec,
+        git_rexec.cli,
         "parse_args",
         lambda: _make_args(directories=[tmp_path], exec_cmd=["nonexistent_bin"]),
     )
-    monkeypatch.setattr(git_rexec, "discover_repos", lambda *_a: {tmp_path})
+    monkeypatch.setattr(git_rexec.cli, "discover_repos", lambda *_a: {tmp_path})
     monkeypatch.setattr("shutil.which", lambda _cmd, **_kw: None)
     with pytest.raises(SystemExit) as exc_info:
-        git_rexec.main()
+        git_rexec.cli.command_line_interface()
     assert exc_info.value.code == 1
     assert "Command not found: nonexistent_bin" in capsys.readouterr().out
 
@@ -831,14 +889,14 @@ def test_main_invalid_if_exec_quotes(
 ) -> None:
     """Exit with code 2 when --if-exec has unbalanced quotes."""
     monkeypatch.setattr(
-        git_rexec,
+        git_rexec.cli,
         "parse_args",
         lambda: _make_args(
             directories=[tmp_path], print=True, if_exec="echo 'unclosed"
         ),
     )
     with pytest.raises(SystemExit) as exc_info:
-        git_rexec.main()
+        git_rexec.cli.command_line_interface()
     assert exc_info.value.code == 2
     assert "Error parsing --if-exec" in capsys.readouterr().err
 
@@ -850,12 +908,12 @@ def test_main_empty_if_exec(
 ) -> None:
     """Exit with code 2 when --if-exec is empty or whitespace only."""
     monkeypatch.setattr(
-        git_rexec,
+        git_rexec.cli,
         "parse_args",
         lambda: _make_args(directories=[tmp_path], print=True, if_exec="   "),
     )
     with pytest.raises(SystemExit) as exc_info:
-        git_rexec.main()
+        git_rexec.cli.command_line_interface()
     assert exc_info.value.code == 2
     assert "--if-exec command cannot be empty" in capsys.readouterr().err
 
@@ -867,16 +925,16 @@ def test_main_if_exec_command_not_found(
 ) -> None:
     """Filter out repo and exit 0 when --if-exec binary is not in PATH."""
     monkeypatch.setattr(
-        git_rexec,
+        git_rexec.cli,
         "parse_args",
         lambda: _make_args(
             directories=[tmp_path], print=True, if_exec="missing_filter"
         ),
     )
-    monkeypatch.setattr(git_rexec, "discover_repos", lambda *_a: {tmp_path})
+    monkeypatch.setattr(git_rexec.cli, "discover_repos", lambda *_a: {tmp_path})
     monkeypatch.setattr("shutil.which", lambda _cmd, **_kw: None)
     with pytest.raises(SystemExit) as exc_info:
-        git_rexec.main()
+        git_rexec.cli.command_line_interface()
     assert exc_info.value.code == 0
     assert capsys.readouterr().out == ""
 
@@ -888,17 +946,17 @@ def test_main_discover_repos_error(
 ) -> None:
     """Exit with code 1 when discover_repos raises an OSError."""
     monkeypatch.setattr(
-        git_rexec,
+        git_rexec.cli,
         "parse_args",
         lambda: _make_args(directories=[tmp_path], print=True),
     )
     monkeypatch.setattr(
-        git_rexec,
+        git_rexec.cli,
         "discover_repos",
         MagicMock(side_effect=OSError("discovery failed")),
     )
     with pytest.raises(SystemExit) as exc_info:
-        git_rexec.main()
+        git_rexec.cli.command_line_interface()
     assert exc_info.value.code == 1
     assert "Error discovering repositories: discovery failed" in capsys.readouterr().err
 
@@ -910,20 +968,20 @@ def test_main_worker_failure(
 ) -> None:
     """Exit unsuccessfully when a parallel worker raises RuntimeError."""
     monkeypatch.setattr(
-        git_rexec,
+        git_rexec.cli,
         "parse_args",
         lambda: _make_args(directories=[tmp_path], parallel=True, exec_cmd=["git"]),
     )
     monkeypatch.setattr("shutil.which", lambda _cmd, **_kw: "/usr/bin/git")
-    monkeypatch.setattr(git_rexec, "discover_repos", lambda *_a: {tmp_path})
+    monkeypatch.setattr(git_rexec.cli, "discover_repos", lambda *_a: {tmp_path})
     monkeypatch.setattr(
-        git_rexec,
+        git_rexec.cli,
         "execute_parallel_tasks",
         MagicMock(side_effect=RuntimeError("worker failed")),
     )
 
     with pytest.raises(SystemExit) as exc_info:
-        git_rexec.main()
+        git_rexec.cli.command_line_interface()
 
     assert exc_info.value.code == 1
     assert "worker failed" in capsys.readouterr().err
@@ -942,14 +1000,14 @@ def test_main_print_modes(  # noqa: PLR0913, PLR0917
     expected_end: str,
 ) -> None:
     """Test --print and --print0 output formatting."""
-    monkeypatch.setattr(git_rexec, "HAS_SETPROCTITLE", True)
-    monkeypatch.setattr(git_rexec, "setproctitle", MagicMock(), raising=False)
-    monkeypatch.setattr(git_rexec, "HAS_COLORAMA", True)
-    monkeypatch.setattr(git_rexec, "colorama_init", MagicMock(), raising=False)
+    monkeypatch.setattr(git_rexec.cli, "HAS_SETPROCTITLE", True)
+    monkeypatch.setattr(git_rexec.cli, "setproctitle", MagicMock(), raising=False)
+    monkeypatch.setattr(git_rexec.cli, "HAS_COLORAMA", True)
+    monkeypatch.setattr(git_rexec.cli, "colorama_init", MagicMock(), raising=False)
     monkeypatch.setattr("shutil.which", lambda _cmd, **_kw: "/usr/bin/true")
 
     monkeypatch.setattr(
-        git_rexec,
+        git_rexec.cli,
         "parse_args",
         lambda: _make_args(
             directories=[tmp_path],
@@ -958,15 +1016,15 @@ def test_main_print_modes(  # noqa: PLR0913, PLR0917
             if_exec="true",
         ),
     )
-    monkeypatch.setattr(git_rexec, "discover_repos", lambda *_a: {tmp_path})
+    monkeypatch.setattr(git_rexec.cli, "discover_repos", lambda *_a: {tmp_path})
     monkeypatch.setattr(
-        git_rexec,
+        git_rexec.cli,
         "execute_parallel_tasks",
-        lambda *_a: [git_rexec.RepoContext(path=tmp_path)],
+        lambda *_a: [git_rexec.command_execution.RepoContext(path=tmp_path)],
     )
 
     with pytest.raises(SystemExit) as exc_info:
-        git_rexec.main()
+        git_rexec.cli.command_line_interface()
     assert exc_info.value.code == 0
     assert capsys.readouterr().out == f"{tmp_path}{expected_end}"
 
@@ -978,26 +1036,30 @@ def test_main_parallel_execution_with_error(
 ) -> None:
     """Display parallel output and report non-zero exit code in summary."""
     monkeypatch.setattr(
-        git_rexec,
+        git_rexec.cli,
         "parse_args",
         lambda: _make_args(
             directories=[tmp_path], parallel=True, exec_cmd=["git", "status"]
         ),
     )
     monkeypatch.setattr("shutil.which", lambda _cmd, **_kw: "/usr/bin/git")
-    monkeypatch.setattr(git_rexec, "discover_repos", lambda *_a: {tmp_path})
+    monkeypatch.setattr(git_rexec.cli, "discover_repos", lambda *_a: {tmp_path})
 
-    p_res = git_rexec.CommandResult(
+    p_res = git_rexec.command_execution.CommandResult(
         command=["git", "status"], returncode=1, stdout="dirty\n"
     )
     monkeypatch.setattr(
-        git_rexec,
+        git_rexec.cli,
         "execute_parallel_tasks",
-        lambda *_a: [git_rexec.RepoContext(path=tmp_path, parallel_result=p_res)],
+        lambda *_a: [
+            git_rexec.command_execution.RepoContext(
+                path=tmp_path, parallel_result=p_res
+            )
+        ],
     )
 
     with pytest.raises(SystemExit) as exc_info:
-        git_rexec.main()
+        git_rexec.cli.command_line_interface()
     assert exc_info.value.code == 1
     out = capsys.readouterr().out
     assert "dirty" in out
@@ -1022,7 +1084,7 @@ def test_main_foreground_execution(
 ) -> None:
     """Test sequential foreground execution success and exception branches."""
     monkeypatch.setattr(
-        git_rexec,
+        git_rexec.cli,
         "parse_args",
         lambda: _make_args(
             directories=[tmp_path],
@@ -1032,16 +1094,16 @@ def test_main_foreground_execution(
         ),
     )
     monkeypatch.setattr("shutil.which", lambda _cmd, **_kw: "/usr/bin/git")
-    monkeypatch.setattr(git_rexec, "discover_repos", lambda *_a: {tmp_path})
+    monkeypatch.setattr(git_rexec.cli, "discover_repos", lambda *_a: {tmp_path})
     monkeypatch.setattr(
-        git_rexec,
+        git_rexec.cli,
         "execute_parallel_tasks",
-        lambda *_a: [git_rexec.RepoContext(path=tmp_path)],
+        lambda *_a: [git_rexec.command_execution.RepoContext(path=tmp_path)],
     )
 
     with patch("subprocess.check_call", side_effect=side_effect):
         with pytest.raises(SystemExit) as exc_info:
-            git_rexec.main()
+            git_rexec.cli.command_line_interface()
         assert exc_info.value.code == expected_rc
 
     out = capsys.readouterr().out
@@ -1064,9 +1126,9 @@ def test_dunder_main_signals(
     monkeypatch: pytest.MonkeyPatch, exc: BaseException, expected_code: int
 ) -> None:
     """Verify __main__ catches KeyboardInterrupt and BrokenPipeError."""
-    monkeypatch.setattr(git_rexec, "_run", MagicMock(side_effect=exc))
+    monkeypatch.setattr(git_rexec.cli, "_run", MagicMock(side_effect=exc))
     with pytest.raises(SystemExit) as exc_info:
-        git_rexec.main()
+        git_rexec.cli.command_line_interface()
     assert exc_info.value.code == expected_code
 
 
@@ -1092,7 +1154,9 @@ def test_has_ignore_marker(tmp_path: Path, kind: str) -> None:
         except (OSError, NotImplementedError) as exc:
             pytest.skip(f"Symbolic links are unavailable: {exc}")
 
-    assert git_rexec.has_ignore_marker(tmp_path) is (kind in {"file", "symlink"})
+    assert git_rexec.git_discovery.has_ignore_marker(tmp_path) is (
+        kind in {"file", "symlink"}
+    )
 
 
 @pytest.mark.parametrize("git_file", [False, True], ids=["repository", "worktree"])
@@ -1110,7 +1174,7 @@ def test_git_find_repo_marker_precedes_repository_detection(
     else:
         (repo / ".git").mkdir()
     (repo / ".git-rexec-ignore").touch()
-    original_scandir = git_rexec.os.scandir
+    original_scandir = git_rexec.git_discovery.os.scandir
 
     def ordered_scandir(path: Path) -> Any:
         """Supply a controlled entry order for the marked repository.
@@ -1131,8 +1195,10 @@ def test_git_find_repo_marker_precedes_repository_detection(
         context.__exit__.return_value = False
         return context
 
-    with patch.object(git_rexec.os, "scandir", side_effect=ordered_scandir):
-        assert git_rexec.git_find_repo({tmp_path}) == (set(), set())
+    with patch.object(
+        git_rexec.git_discovery.os, "scandir", side_effect=ordered_scandir
+    ):
+        assert git_rexec.git_discovery.git_find_repo({tmp_path}) == (set(), set())
 
 
 def test_git_find_repo_prunes_marked_tree_only(tmp_path: Path) -> None:
@@ -1143,7 +1209,10 @@ def test_git_find_repo_prunes_marked_tree_only(tmp_path: Path) -> None:
     allowed = tmp_path / "allowed"
     (allowed / ".git").mkdir(parents=True)
 
-    assert git_rexec.git_find_repo({tmp_path}) == ({allowed.resolve()}, set())
+    assert git_rexec.git_discovery.git_find_repo({tmp_path}) == (
+        {allowed.resolve()},
+        set(),
+    )
 
 
 @pytest.mark.parametrize("marker_location", ["root", "ancestor"])
@@ -1154,7 +1223,7 @@ def test_git_find_repo_marked_start(tmp_path: Path, marker_location: str) -> Non
     marker_parent = root if marker_location == "root" else tmp_path
     (marker_parent / ".git-rexec-ignore").touch()
 
-    assert git_rexec.git_find_repo({root}) == (set(), set())
+    assert git_rexec.git_discovery.git_find_repo({root}) == (set(), set())
 
 
 @pytest.mark.parametrize("inside_repository", [False, True])
@@ -1169,10 +1238,12 @@ def test_discover_repos_marked_start(
     (root / ".git").mkdir()
     marker_parent = start if marker_location == "start" else root
     (marker_parent / ".git-rexec-ignore").touch()
-    backend = MagicMock(spec=git_rexec.GitBackend)
+    backend = MagicMock(spec=git_rexec.git_backend.GitBackend)
     backend.toplevel.return_value = root if inside_repository else None
 
-    assert git_rexec.discover_repos(backend, [start], 1, [], False) == set()
+    assert (
+        git_rexec.git_discovery.discover_repos(backend, [start], 1, [], False) == set()
+    )
 
 
 @pytest.mark.parametrize("kind", ["submodule", "worktree"])
@@ -1196,7 +1267,7 @@ def test_get_sub_repos_filters_marked_targets(
         (repo / ".git").touch()
     marker_parent = blocked if marker_location == "repository" else blocked_parent
     (marker_parent / ".git-rexec-ignore").touch()
-    backend = MagicMock(spec=git_rexec.GitBackend)
+    backend = MagicMock(spec=git_rexec.git_backend.GitBackend)
     backend.toplevel.return_value = source
     backend.list_worktrees.return_value = (
         {blocked, allowed} if kind == "worktree" else set()
@@ -1205,9 +1276,12 @@ def test_get_sub_repos_filters_marked_targets(
         {blocked, allowed} if kind == "submodule" else set()
     )
 
-    assert git_rexec.get_sub_repos(backend, source) == {allowed}
+    assert git_rexec.git_discovery.get_sub_repos(backend, source) == {allowed}
     expected = {allowed} if kind == "worktree" else {source, allowed}
-    assert git_rexec.discover_repos(backend, [source], 2, [], True) == expected
+    assert (
+        git_rexec.git_discovery.discover_repos(backend, [source], 2, [], True)
+        == expected
+    )
 
 
 def test_discover_repos_skips_marked_source(tmp_path: Path) -> None:
@@ -1215,12 +1289,12 @@ def test_discover_repos_skips_marked_source(tmp_path: Path) -> None:
     (tmp_path / ".git").touch()
     (tmp_path / ".gitmodules").touch()
     (tmp_path / ".git-rexec-ignore").touch()
-    backend = MagicMock(spec=git_rexec.GitBackend)
+    backend = MagicMock(spec=git_rexec.git_backend.GitBackend)
 
     backend.toplevel.return_value = tmp_path
 
     assert (
-        git_rexec.discover_repos(
+        git_rexec.git_discovery.discover_repos(
             backend, [tmp_path], max_workers=1, exclude_dirs=[], include_sub_repos=True
         )
         == set()
