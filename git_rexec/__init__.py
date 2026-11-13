@@ -591,7 +591,7 @@ def process_repo(
 
 def discover_repos(
     git_backend: GitBackend,
-    directories: Iterable[Path] | Path,
+    directories: Iterable[Path],
     max_workers: int,
     exclude_dirs: list[str],
     include_sub_repos: bool,
@@ -607,13 +607,14 @@ def discover_repos(
     """
     resolved_ex_dirs: set[Path] = {Path(ex_dir).resolve() for ex_dir in exclude_dirs}
 
-    roots = (directories,) if isinstance(directories, Path) else directories
     resolved_scan_roots: set[Path] = set()
-    for directory in {path.resolve() for path in roots}:
+    for directory in {path.resolve() for path in directories}:
         if is_excluded(directory, resolved_ex_dirs) or is_ignored_directory(directory):
             continue
+
         resolved_scan_roots.add(git_backend.toplevel(directory) or directory)
 
+    # Find repositories and worktrees
     git_repos, git_worktrees = git_find_repo(resolved_scan_roots, resolved_ex_dirs)
 
     # Extract and append sub-repositories concurrently if requested

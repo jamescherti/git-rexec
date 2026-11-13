@@ -1159,7 +1159,7 @@ def test_discover_repos_marked_start(
     backend = MagicMock(spec=git_rexec.GitBackend)
     backend.toplevel.return_value = root if inside_repository else None
 
-    assert git_rexec.discover_repos(backend, start, 1, [], False) == set()
+    assert git_rexec.discover_repos(backend, [start], 1, [], False) == set()
 
 
 @pytest.mark.parametrize("kind", ["submodule", "worktree"])
@@ -1194,7 +1194,7 @@ def test_get_sub_repos_filters_marked_targets(
 
     assert git_rexec.get_sub_repos(backend, source) == {allowed}
     expected = {allowed} if kind == "worktree" else {source, allowed}
-    assert git_rexec.discover_repos(backend, source, 2, [], True) == expected
+    assert git_rexec.discover_repos(backend, [source], 2, [], True) == expected
 
 
 def test_discover_repos_skips_marked_source(tmp_path: Path) -> None:
@@ -1208,7 +1208,7 @@ def test_discover_repos_skips_marked_source(tmp_path: Path) -> None:
 
     assert (
         git_rexec.discover_repos(
-            backend, tmp_path, max_workers=1, exclude_dirs=[], include_sub_repos=True
+            backend, [tmp_path], max_workers=1, exclude_dirs=[], include_sub_repos=True
         )
         == set()
     )
