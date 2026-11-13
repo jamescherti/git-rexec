@@ -349,7 +349,6 @@ def git_find_repo(
     :return: A tuple containing standard repository paths and worktrees paths.
     """
     dirs_to_visit: deque[Path] = deque()
-    visited: set[Path] = set()
     for directory in set(resolved_roots):
         if not is_excluded(
             directory, resolved_exclude_paths
@@ -358,6 +357,7 @@ def git_find_repo(
 
     git_repos: set[Path] = set()
     git_worktrees: set[Path] = set()
+    visited: set[Path] = set()
     while dirs_to_visit:
         current_dir: Path = dirs_to_visit.popleft()
         if current_dir in visited:
@@ -365,6 +365,10 @@ def git_find_repo(
 
         visited.add(current_dir)
 
+        # Try and OSError It protects your script from crashing mid-execution when
+        # encountering common filesystem issues. In a directory scanner, os.scandir()
+        # and entry checks frequently raise exceptions that inherit from OSError. For
+        # example, Permission Denied, Broken Links and Race Conditions, I/O errors...
         try:
             with os.scandir(current_dir) as iter_scandir:
                 dirs_in_current: list[Path] = []
