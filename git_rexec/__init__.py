@@ -357,13 +357,8 @@ def git_find_repo(
 
     git_repos: set[Path] = set()
     git_worktrees: set[Path] = set()
-    visited: set[Path] = set()
     while dirs_to_visit:
         current_dir: Path = dirs_to_visit.popleft()
-        if current_dir in visited:
-            continue
-
-        visited.add(current_dir)
 
         # Try and OSError It protects your script from crashing mid-execution when
         # encountering common filesystem issues. In a directory scanner, os.scandir()
