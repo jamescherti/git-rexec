@@ -348,9 +348,6 @@ def git_find_repo(
         traversal.
     :return: A tuple containing standard repository paths and worktrees paths.
     """
-    git_repos: set[Path] = set()
-    git_worktrees: set[Path] = set()
-
     dirs_to_visit: deque[Path] = deque()
     visited: set[Path] = set()
     for directory in resolved_roots:
@@ -359,6 +356,8 @@ def git_find_repo(
         ) and not is_ignored_directory(directory):
             dirs_to_visit.append(directory)
 
+    git_repos: set[Path] = set()
+    git_worktrees: set[Path] = set()
     while dirs_to_visit:
         current_dir: Path = dirs_to_visit.popleft()
         if current_dir in visited:
