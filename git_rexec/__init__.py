@@ -350,7 +350,7 @@ def git_find_repo(
     """
     dirs_to_visit: deque[Path] = deque()
     visited: set[Path] = set()
-    for directory in resolved_roots:
+    for directory in set(resolved_roots):
         if not is_excluded(
             directory, resolved_exclude_paths
         ) and not is_ignored_directory(directory):
